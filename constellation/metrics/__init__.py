@@ -10,3 +10,9 @@ from constellation.metrics.coupling import (MAX_COMMIT_FILES, MIN_SHARED,
 
 __all__ += ["MAX_COMMIT_FILES", "MIN_SHARED", "MIN_STRENGTH", "CouplingIndex",
             "CouplingPair"]
+from constellation.metrics.ownership import (BUS_MIN_CHANGES, BUS_SHARE,
+                                             BUS_SILENT_DAYS, Ownership,
+                                             bus_factor_risk, ownership)
+
+__all__ += ["BUS_MIN_CHANGES", "BUS_SHARE", "BUS_SILENT_DAYS", "Ownership",
+            "bus_factor_risk", "ownership"]
