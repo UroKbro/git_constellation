@@ -301,3 +301,20 @@ def test_comet_tail_points_away_from_bounds_centre_and_braids(gl_ctx):
     tail = diff[ys[0] - 6:ys[1] + 7, xs[0] - 6:xs[1] + 7]
     assert ((tail[..., 0] > tail[..., 2] + 20)).any()  # red strand
     assert ((tail[..., 2] > tail[..., 0] + 20)).any()  # blue strand
+
+
+def test_star_glow_shows_around_occluding_planet_but_core_is_hidden(gl_ctx):
+    r = Renderer(gl_ctx, SIZE, target=_target(gl_ctx))
+    cam = _cam()
+    back = -3.0 * cam.eye() / np.linalg.norm(cam.eye())   # behind the planet
+    star = _stars([back], radius=2.0)
+    red = _planets(rgb=(1.0, 0.0, 0.0), emissive=0.0)       # disc ~10.5 px
+    alone = _draw(r, cam, stars=star).astype(int)
+    both = _draw(r, cam, red, star).astype(int)
+    planet = _draw(r, cam, red).astype(int)
+    # core occluded: green at the centre is far below the unoccluded star
+    assert both[64, 64, 1] < alone[64, 64, 1] - 30
+    # ...but the glow (no depth test) still shows through the planet's disc
+    assert both[64, 64, 1] > planet[64, 64, 1] + 20
+    # glow still lights pixels just outside the planet's silhouette
+    assert both[64, 64 + 15, 1] > planet[64, 64 + 15, 1] + 20

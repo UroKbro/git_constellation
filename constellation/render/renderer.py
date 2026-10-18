@@ -305,8 +305,14 @@ class Renderer:
         ctx.enable(moderngl.BLEND)
         fbo.depth_mask = False
         if self.stars.n:
+            # core hides behind planets; the glow shows through its own planet cloud
             _set(self.p_star, "u_falloff_k", STAR_FALLOFF_K)
-            self.stars.vao.render(moderngl.TRIANGLE_STRIP, vertices=4, instances=self.stars.n)
+            for part in (0, 1):
+                _set(self.p_star, "u_part", part)
+                (ctx.disable if part else ctx.enable)(moderngl.DEPTH_TEST)
+                self.stars.vao.render(moderngl.TRIANGLE_STRIP, vertices=4,
+                                      instances=self.stars.n)
+            ctx.enable(moderngl.DEPTH_TEST)
         if self.pulses.n:
             self.pulses.vao.render(moderngl.POINTS, vertices=self.pulses.n)
         if self.comets.n:

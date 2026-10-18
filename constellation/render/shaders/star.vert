@@ -13,7 +13,8 @@ in float in_intensity;       // peak HDR, <= 4, log subtree size
 in float in_floor_px;        // min billboard half-size (0 for small subtrees)
 out vec2 v_uv;
 flat out vec3 v_color;
-flat out float v_core;       // core radius as a fraction of the billboard
+flat out float v_core;
+flat out float v_weight;       // core radius as a fraction of the billboard
 
 const float GLOW = 3.0;       // glow half-size in star radii
 const float CORE_WORLD = 0.8;  // core radius cap, world units
@@ -32,6 +33,7 @@ void main() {
     }
     float core = max(min(CORE_WORLD, in_radius), CORE_MIN_PX / px_per_unit);
     v_core = min(core / half_size, 1.0);
+    v_weight = w;
     v_uv = corner;
     v_color = in_color * in_intensity * fog;
     gl_Position = u_proj * vec4(c + vec3(corner * half_size, 0.0), 1.0);
