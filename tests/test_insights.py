@@ -36,6 +36,7 @@ def test_empty_window_summary():
     h = _history()
     fs = findings(h, h.window(since=10**12), 19)
     assert fs[0].kind == "summary" and fs[0].detail == "No commits in the selected range."
+    assert fs[0].title == "0 commits by 0 authors, 6 files"
 
 
 def test_kind_order():
@@ -88,3 +89,16 @@ def test_hotspot_cap_10_with_12_hot_files():
     hs = _by_kind(findings(h, h.window(), 1), "hotspot")
     assert len(hs) == 10
     assert [f.title for f in hs] == [f"f{i:02d}.py is a hotspot" for i in range(10)]
+
+
+def test_coupling_skips_dead_files():
+    from constellation.types import FileChange
+    cs = [c(0, [A("x/a.py", 3), A("y/b.py", 3)], day=0)]
+    cs += [c(i, [M("x/a.py", 1, 0), M("y/b.py", 1, 0)], day=i) for i in range(1, 5)]
+    cs.append(c(5, [FileChange("D", "y/b.py", None, 0, 3, False), M("x/a.py", 1, 0)], day=5))
+    cs.append(c(6, [M("x/a.py", 1, 0)], day=6))
+    h = RepoHistory.build(cs)
+    before = _by_kind(findings(h, h.window(), 4), "coupling")
+    assert [f.title for f in before] == ["x/a.py ↔ y/b.py"]
+    for ph in (5, 6):
+        assert _by_kind(findings(h, h.window(), ph), "coupling") == []

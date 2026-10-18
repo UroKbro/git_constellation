@@ -48,8 +48,9 @@ def findings(h: RepoHistory, w: Window, playhead: int,
     if coupling is None:
         coupling = CouplingIndex(h)
     shown = 0
+    alive = h.files_alive_at(playhead)
     for p in coupling.pairs(w.start, playhead):
-        if h.file_dir[p.a] == h.file_dir[p.b]:
+        if h.file_dir[p.a] == h.file_dir[p.b] or not (alive[p.a] and alive[p.b]):
             continue
         out.append(Finding(
             "coupling", f"{path(p.a)} ↔ {path(p.b)}",
@@ -81,11 +82,11 @@ def findings(h: RepoHistory, w: Window, playhead: int,
 
 
 def _summary(h: RepoHistory, w: Window, playhead: int) -> Finding:
+    n_files = int(h.files_alive_at(playhead).sum())
     if w.empty:
-        return Finding("summary", "0 commits by 0 authors, 0 files",
+        return Finding("summary", f"0 commits by 0 authors, {n_files} files",
                        "No commits in the selected range.", ())
     n_authors = len(set(h.commit_author[w.start:w.end + 1].tolist()))
-    n_files = int(h.files_alive_at(playhead).sum())
     first = datetime.fromtimestamp(int(h.commit_ts[w.start]), timezone.utc)
     last = datetime.fromtimestamp(int(h.commit_ts[w.end]), timezone.utc)
     return Finding("summary",
