@@ -7,8 +7,9 @@ import moderngl
 import numpy as np
 
 from constellation.scene import CometBatch, PlanetBatch, PulseBatch, StarBatch
+from constellation.themes import DEEP_SPACE, Theme
 
-BACKGROUND = (0.02, 0.02, 0.05, 1.0)
+BACKGROUND = (*DEEP_SPACE.background, 1.0)
 STARFIELD_N, STARFIELD_SEED = 2000, 7
 PLANET_FLOOR_PX, STAR_FLOOR_PX = 2.0, 4.0
 BLOOM_THRESHOLD, BLOOM_STRENGTH, BLOOM_PASSES = 1.0, 1.0, 2
@@ -19,8 +20,11 @@ STAR_MAX_INTENSITY, STAR_FALLOFF_K = 4.0, 5.0
 HEAVY_STARS, HEAVY_DAMP, HEAVY_MIN_STARS = 5, 0.6, 20
 NEAREST_CHUNK = 1 << 22  # planet x star distance entries per numpy chunk
 _KEY = np.dtype([("x", "<u4"), ("y", "<u4"), ("z", "<u4")])
-# Clear the HDR buffer to the value that tonemaps (1 - exp(-x)) back to BACKGROUND.
-_HDR_BG = tuple(float(-np.log(1.0 - c)) for c in BACKGROUND[:3])
+
+
+def hdr_clear(rgb) -> tuple[float, float, float]:
+    """The HDR value that tonemaps (1 - exp(-x)) back to the display colour `rgb`."""
+    return tuple(float(-np.log(1.0 - c)) for c in rgb[:3])
 
 
 def load_shader(name: str) -> str:
@@ -150,6 +154,8 @@ class Renderer:
         self._screen = target is None
         self.target = ctx.screen if target is None else target
         self.overlay_uploads = 0
+        self.nebula_offset = (0.0, 0.0)  # backdrop parallax, set by the app from the camera
+        self.set_theme(DEEP_SPACE)
         self._overlay_src = None
         self.uploads = 0
         self._bloom_scale = 0.5
@@ -191,6 +197,10 @@ class Renderer:
 
     def _program(self, vs: str, fs: str) -> moderngl.Program:
         return self.ctx.program(vertex_shader=load_shader(vs), fragment_shader=load_shader(fs))
+
+    def set_theme(self, theme: Theme) -> None:
+        self.theme = theme
+        self._hdr_bg = hdr_clear(theme.background)
 
     # ---- targets -----------------------------------------------------------
     @property
@@ -295,10 +305,11 @@ class Renderer:
         fbo = self._scene_fbo
         fbo.use()
         ctx.viewport = (0, 0, *self.size)
-        fbo.clear(*_HDR_BG, 1.0, depth=1.0)
+        fbo.clear(*self._hdr_bg, 1.0, depth=1.0)
         ctx.enable(moderngl.PROGRAM_POINT_SIZE | moderngl.BLEND)
         ctx.blend_func = moderngl.ONE, moderngl.ONE
         ctx.disable(moderngl.DEPTH_TEST)
+        _set(self.p_starfield, "u_tint", tuple(self.theme.starfield))
         self._sf_vao.render(moderngl.POINTS)
 
         # opaque impostors first so the additive passes are depth-tested against them
@@ -338,7 +349,12 @@ class Renderer:
         self._bloom_tex[0].use(1)
         _set(self.p_composite, "u_scene", 0)
         _set(self.p_composite, "u_bloom", 1)
-        _set(self.p_composite, "u_bloom_strength", BLOOM_STRENGTH)
+        _set(self.p_composite, "u_bloom_strength", BLOOM_STRENGTH * self.theme.bloom)
+        _set(self.p_composite, "u_aspect", self.size[0] / self.size[1])
+        _set(self.p_composite, "u_nebula_a", tuple(self.theme.nebula[0]))
+        _set(self.p_composite, "u_nebula_b", tuple(self.theme.nebula[1]))
+        _set(self.p_composite, "u_nebula_amount", self.theme.nebula_amount)
+        _set(self.p_composite, "u_nebula_offset", tuple(map(float, self.nebula_offset)))
         self._quad[self.p_composite].render(moderngl.TRIANGLE_STRIP, vertices=4)
         if self._overlay_tex is not None:
             self._draw_overlay()

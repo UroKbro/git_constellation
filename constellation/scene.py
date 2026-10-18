@@ -9,7 +9,8 @@ import numpy as np
 from constellation.collapse import CollapsePlan, in_window
 from constellation.layout import Layout
 from constellation.model import RepoHistory, Window
-from constellation.palette import language_color, lineage_color
+from constellation.palette import language_family, lineage_from
+from constellation.themes import DEEP_SPACE, Theme
 
 ADD_S = 0.6
 DEL_S = 0.8
@@ -100,12 +101,9 @@ class Scene:
         n = self.n_files = len(h.files)
         nc = len(h.commits)
         self.in_window = in_window(h, window)
-        self.file_rgb = np.array([language_color(f.path) for f in h.files],
-                                 dtype=np.float64).reshape(n, 3)
-        fams: dict[tuple, int] = {}  # language family = distinct palette colour
-        self._fam = np.array([fams.setdefault(tuple(rgb), len(fams)) for rgb in self.file_rgb],
-                             dtype=np.int64)
-        self._fam_rgb = np.array(list(fams), dtype=np.float64).reshape(-1, 3)
+        self.file_family = np.array([language_family(f.path) for f in h.files],
+                                    dtype=np.int64).reshape(n)
+        self._fam = self.file_family
 
         # per-event churn aligned with h._ev_* (same stable sort as the model)
         if n:
@@ -144,14 +142,13 @@ class Scene:
         self._died_sorted = died[self._died_order]
 
         # commit colours: lineage and the second parent's lineage (braid)
-        lin = np.array([lineage_color(int(k)) for k in range(int(h.lineage.max(initial=0)) + 1)])
-        self._c1 = lin[h.lineage] if nc else np.zeros((0, 3))
         sha = {cm.sha: i for i, cm in enumerate(h.commits)}
         l2 = h.lineage.copy()
         for i, cm in enumerate(h.commits):
             if len(cm.parents) > 1 and cm.parents[1] in sha:
                 l2[i] = h.lineage[sha[cm.parents[1]]]
-        self._c2 = lin[l2] if nc else np.zeros((0, 3))
+        self._lin2 = l2
+        self.set_theme(DEEP_SPACE)
 
         # dirs: depth levels for subtree sums, owning collapse group per dir
         parent = np.asarray(h.dir_parent, dtype=np.int64)
@@ -191,6 +188,18 @@ class Scene:
         self._base: dict = {}
 
     # ---- helpers -----------------------------------------------------------
+    def set_theme(self, theme: Theme) -> None:
+        """Recolour planets, stars and future pulses/comets (live effects keep theirs)."""
+        h, nc = self.h, len(self.h.commits)
+        self.theme = theme
+        self._fam_rgb = np.array(theme.languages, dtype=np.float64)
+        self.file_rgb = self._fam_rgb[self.file_family].reshape(-1, 3)
+        lin = np.array([lineage_from(theme.lineage, int(k))
+                        for k in range(int(h.lineage.max(initial=0)) + 1)])
+        self._c1 = lin[h.lineage] if nc else np.zeros((0, 3))
+        self._c2 = lin[self._lin2] if nc else np.zeros((0, 3))
+        self._key = None  # rebuild the planet/star base
+
     def _place(self, files: np.ndarray, commits) -> np.ndarray:
         """Vectorised Layout.place_at."""
         files = np.asarray(files, dtype=np.int64)
@@ -372,7 +381,7 @@ class Scene:
             "star_pos": self._dir_pos[vis].astype(_F),
             "star_radius": (0.6 + 0.12 * np.sqrt(sub[vis])).astype(_F),
         }
-        self._base["star_color"] = np.tile(np.array(STAR_RGB, dtype=_F), (int(vis.sum()), 1))
+        self._base["star_color"] = np.tile(np.array(self.theme.star, dtype=_F), (int(vis.sum()), 1))
         self._key = key
         return self._base
 

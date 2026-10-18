@@ -31,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--screenshot", metavar="PATH", help=argparse.SUPPRESS)
     ap.add_argument("--at", type=float, default=1.0, help=argparse.SUPPRESS)
     ap.add_argument("--display", type=int, help=argparse.SUPPRESS)
+    ap.add_argument("--theme", choices=["Deep Space", "Cyberpunk Nebula", "Solar Flare"],
+                    help="galaxy theme (default: last used; P cycles in the window)")
+    ap.add_argument("--export", metavar="PATH.mp4|PATH.gif",
+                    help="render the whole history to a video and exit (needs ffmpeg)")
     ap.add_argument("--bench", type=float, metavar="SECONDS", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
@@ -66,7 +70,8 @@ def _run(args: argparse.Namespace) -> int:
         from constellation import app  # the only path that imports pygame
         return app.run(root, args.branch, since, until, not args.no_cache,
                        f"git-constellation — {root.name}", bench=args.bench,
-                       screenshot=args.screenshot, at=args.at, display=args.display)
+                       screenshot=args.screenshot, at=args.at, display=args.display,
+                       theme=args.theme, export=args.export)
     if head is None:
         return 0
 

@@ -149,7 +149,8 @@ def test_cli_window_mode_calls_app(repo, monkeypatch, capsys):
     assert seen["ref"] == "HEAD" and seen["until"] is None and seen["use_cache"] is False
     assert isinstance(seen["since"], int)
     assert seen["title"] == f"git-constellation — {repo.path.name}"
-    assert seen["kw"] == {"bench": None, "screenshot": None, "at": 1.0, "display": None}
+    assert seen["kw"] == {"bench": None, "screenshot": None, "at": 1.0, "display": None,
+                          "theme": None, "export": None}
     assert "Galaxy window" not in capsys.readouterr().out
 
 
@@ -160,7 +161,8 @@ def test_cli_hidden_flags_reach_app(repo, monkeypatch):
     monkeypatch.setattr(app, "run", lambda *a, **kw: seen.update(kw) or 0)
     assert main([str(repo.path), "--bench", "2.5", "--screenshot", "x.png", "--at", "0.6",
                  "--display", "1"]) == 0
-    assert seen == {"bench": 2.5, "screenshot": "x.png", "at": 0.6, "display": 1}
+    assert seen == {"bench": 2.5, "screenshot": "x.png", "at": 0.6, "display": 1,
+                    "theme": None, "export": None}
 
 
 def test_bench_flag_is_hidden(capsys):
