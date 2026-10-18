@@ -136,30 +136,56 @@ def test_summary_never_imports_pygame(repo):
 
 def test_cli_window_mode_calls_app(repo, monkeypatch, capsys):
     import constellation.app as app
-    from constellation.layout import Layout
-    from constellation.model import RepoHistory
     hot_repo(repo)
     seen = {}
 
-    def fake_run(h, layout, title, w, **kw):
-        seen.update(h=h, layout=layout, title=title, w=w, kw=kw)
+    def fake_run(root, ref, since, until, use_cache, title, **kw):
+        seen.update(root=root, ref=ref, since=since, until=until, use_cache=use_cache,
+                    title=title, kw=kw)
         return 0
     monkeypatch.setattr(app, "run", fake_run)
-    assert main([str(repo.path)]) == 0
-    assert isinstance(seen["h"], RepoHistory)
-    assert {f.path for f in seen["h"].files} == {"hot.py", "calm.py"}
-    assert isinstance(seen["layout"], Layout)
-    assert seen["w"].end == len(seen["h"].commits) - 1
+    assert main([str(repo.path), "--since", "2024-06-11", "--no-cache"]) == 0
+    assert seen["root"] == repo.path.resolve()
+    assert seen["ref"] == "HEAD" and seen["until"] is None and seen["use_cache"] is False
+    assert isinstance(seen["since"], int)
+    assert seen["title"] == f"git-constellation — {repo.path.name}"
+    assert seen["kw"] == {"bench": None, "screenshot": None, "at": 1.0, "display": None}
     assert "Galaxy window" not in capsys.readouterr().out
+
+
+def test_cli_hidden_flags_reach_app(repo, monkeypatch):
+    import constellation.app as app
+    hot_repo(repo)
+    seen = {}
+    monkeypatch.setattr(app, "run", lambda *a, **kw: seen.update(kw) or 0)
+    assert main([str(repo.path), "--bench", "2.5", "--screenshot", "x.png", "--at", "0.6",
+                 "--display", "1"]) == 0
+    assert seen == {"bench": 2.5, "screenshot": "x.png", "at": 0.6, "display": 1}
+
+
+def test_bench_flag_is_hidden(capsys):
+    import pytest
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = capsys.readouterr().out
+    assert "--bench" not in out and "--screenshot" not in out and "--summary" in out
 
 
 def test_cli_window_mode_empty_repo(repo, monkeypatch, capsys):
     import constellation.app as app
     titles = []
-    monkeypatch.setattr(app, "run_empty", lambda title, **kw: titles.append(title) or 0)
+    monkeypatch.setattr(app, "run", lambda root, ref, s, u, c, title, **kw:
+                        titles.append(title) or 0)
     assert main([str(repo.path)]) == 0
     assert "No commits yet." in capsys.readouterr().out
     assert len(titles) == 1
+
+
+def test_cli_window_mode_errors_before_opening(tmp_path, monkeypatch, capsys):
+    import constellation.app as app
+    monkeypatch.setattr(app, "run", lambda *a, **kw: pytest.fail("window opened"))
+    assert main([str(tmp_path)]) == 1
+    assert "is not inside a git repository" in capsys.readouterr().err
 
 
 def test_initial_mask_is_alive_at_window_end(repo):
@@ -176,27 +202,51 @@ def test_initial_mask_is_alive_at_window_end(repo):
     assert drawn == {"a.py"}
 
 
-@pytest.mark.slow
-def test_screenshot_flag(repo, tmp_path):
-    pygame = pytest.importorskip("pygame")
-    from constellation.render.gl import standalone_context
-    ctx = standalone_context()
-    if ctx is None:
-        pytest.skip("no OpenGL context")
-    ctx.release()
-    for i in range(3):
-        repo.commit(f"c{i}", {f"src/f{i}.py": "x\n", f"docs/d{i}.md": "y\n"}, day=i)
-    out = tmp_path / "out.png"
-    r = subprocess.run([sys.executable, "-m", "constellation", str(repo.path),
-                        "--screenshot", str(out)], cwd=ROOT, capture_output=True, text=True)
+def _display_env() -> dict:
+    """The parent env without the dummy video driver tests/test_ui.py sets in-process."""
+    import os
+    env = dict(os.environ)
+    if env.get("SDL_VIDEODRIVER") == "dummy":
+        del env["SDL_VIDEODRIVER"]
+    return env
+
+
+def _screenshot(repo_path, out, *extra):
+    r = subprocess.run([sys.executable, "-m", "constellation", str(repo_path),
+                        "--screenshot", str(out), *extra], cwd=ROOT, capture_output=True,
+                       text=True, env=_display_env())
     if r.returncode == 3:
         pytest.skip(f"no display: {r.stderr.strip()}")
     assert r.returncode == 0, r.stderr
+    return r
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("at", ["1.0", "0.5"])
+def test_screenshot_flag(repo, tmp_path, at):
+    pygame = pytest.importorskip("pygame")
+    import numpy as np
+    for i in range(3):
+        repo.commit(f"c{i}", {f"src/f{i}.py": "x\n" * 40, f"docs/d{i}.md": "y\n"}, day=i)
+    out = tmp_path / "out.png"
+    r = _screenshot(repo.path, out, "--at", at)
     img = pygame.image.load(str(out))
     w, h = img.get_size()
     reported = r.stdout.strip().rsplit("(", 1)[1].rstrip(")")
     assert reported == f"{w}x{h}"
-    assert w > 0 and h > 0 and w * 800 == h * 1280 and w % 1280 == 0
-    import numpy as np
+    assert w > 0 and h > 0 and w * 800 == h * 1280  # drawable keeps the window aspect
     px = np.frombuffer(pygame.image.tobytes(img, "RGB"), np.uint8)
     assert px.max() > 100
+
+
+@pytest.mark.slow
+def test_screenshot_empty_repo(repo, tmp_path):
+    pygame = pytest.importorskip("pygame")
+    import numpy as np
+    out = tmp_path / "empty.png"
+    _screenshot(repo.path, out)
+    img = pygame.image.load(str(out))
+    px = np.frombuffer(pygame.image.tobytes(img, "RGB"), np.uint8).reshape(
+        img.get_height(), img.get_width(), 3)
+    h, w = px.shape[:2]
+    assert px[h // 2 - h // 10:h // 2 + h // 10, w // 3:2 * w // 3].max() > 150  # message
