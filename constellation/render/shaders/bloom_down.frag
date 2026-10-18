@@ -11,5 +11,6 @@ void main() {
     c += texture(u_scene, v_uv + u_texel * vec2( 1.0, -1.0)).rgb;
     c += texture(u_scene, v_uv + u_texel * vec2(-1.0,  1.0)).rgb;
     c += texture(u_scene, v_uv + u_texel * vec2( 1.0,  1.0)).rgb;
+    c = min(c, vec3(4.0 * 4.0));  // 4 taps, each capped at HDR 4
     f_color = vec4(max(c * 0.25 - vec3(u_threshold), 0.0), 1.0);
 }

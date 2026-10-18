@@ -12,7 +12,8 @@ flat in vec3 v_light;
 flat in int v_has_light;
 out vec4 f_color;
 
-const float AMBIENT = 0.12;
+const float AMBIENT = 0.45;
+const float MAX_HDR = 2.0;
 const float EMISSIVE = 0.25;
 
 void main() {
@@ -34,5 +35,5 @@ void main() {
     }
     vec4 clip = u_proj * vec4(hit, 1.0);
     gl_FragDepth = clip.z / clip.w * 0.5 + 0.5;
-    f_color = vec4(rgb, 1.0);
+    f_color = vec4(min(rgb, vec3(MAX_HDR)), 1.0);
 }
