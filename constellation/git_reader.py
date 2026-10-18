@@ -100,7 +100,8 @@ def parse_log(data: bytes) -> Iterator[Commit]:
 
 def iter_commits(root: Path, ref: str = "HEAD", exclude: str | None = None) -> Iterator[Commit]:
     spec = f"{exclude}..{ref}" if exclude else ref
-    cmd = _git(root, "log", "--reverse", "--date-order", "--find-renames",
+    cmd = _git(root, "-c", "log.showSignature=false", "log", "--no-color",
+               "--no-textconv", "--no-ext-diff", "--reverse", "--date-order", "--find-renames",
                "--diff-merges=separate", "--raw",
                "--numstat", "-z", f"--format={_LOG_FORMAT}", spec)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

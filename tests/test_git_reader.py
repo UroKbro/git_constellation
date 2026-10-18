@@ -77,3 +77,14 @@ def test_tags_are_peeled(repo):
 def test_head_loc(repo):
     repo.commit("one", {"a.py": "1\n2\n", "b.py": "1\n2", "e.py": "", "bin": b"\x00z"})
     assert head_loc(repo.path, "HEAD") == {"a.py": 2, "b.py": 2, "e.py": 0, "bin": 0}
+
+
+def test_user_config_does_not_reach_parser(repo):
+    repo.commit("one", {"a.py": "1\n", "b.bin": b"\x00"}, day=0)
+    repo.mv("a.py", "c.py"); repo.commit("two", {"c.py": "1\n2\n"}, day=1)
+    fresh = list(iter_commits(repo.path))
+    repo._git("config", "color.ui", "always")
+    repo._git("config", "log.showSignature", "true")
+    repo._git("config", "diff.dbl.textconv", "sed p")      # doubles every line
+    (repo.path / ".git" / "info" / "attributes").write_text("*.py diff=dbl\n")
+    assert list(iter_commits(repo.path)) == fresh
