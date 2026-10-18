@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import queue
 import sys
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -316,13 +317,67 @@ def tag_fractions(h: RepoHistory, timeline: Timeline) -> list[float]:
     return [timeline.fraction_of(index[t.sha]) for t in h.tags if t.sha in index]
 
 
-class DetailCache:
-    """Panel/tooltip text, recomputed only when its (object, playhead) key changes."""
+class DetailWorker:
+    """One background thread computing the latest requested job (latest wins).
 
-    def __init__(self, loaded: Loaded) -> None:
+    `get(key, job)` never blocks: it returns the result for `key` once ready, else
+    None (queuing `job` if `key` is new). A result whose key is no longer the
+    latest request is discarded."""
+
+    def __init__(self) -> None:
+        self._cv = threading.Condition()
+        self._wanted = None            # latest requested key
+        self._job: tuple | None = None  # (key, job) not yet started
+        self._result: tuple | None = None
+        self.discarded = 0
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def get(self, key, job: Callable[[], object]):
+        with self._cv:
+            if self._result is not None and self._result[0] == key:
+                return self._result[1]
+            if key != self._wanted:
+                self._wanted, self._job = key, (key, job)
+                self._cv.notify()
+            return None
+
+    def latest(self):
+        """Most recent completed result as (key, value), or None."""
+        with self._cv:
+            return self._result
+
+    def _loop(self) -> None:
+        while True:
+            with self._cv:
+                while self._job is None:
+                    self._cv.wait()
+                key, job = self._job
+                self._job = None
+            try:
+                value = job()
+            except Exception as e:  # noqa: BLE001 - show it in the panel, keep the worker
+                value = [f"error: {e}"]
+            with self._cv:
+                if key == self._wanted:
+                    self._result = (key, value)
+                else:
+                    self.discarded += 1
+
+
+PENDING = "…"
+
+
+class DetailCache:
+    """Panel/tooltip text, recomputed only when its (object, playhead) key changes.
+    File details (O(files), ~0.1 s on Django) run on a DetailWorker."""
+
+    def __init__(self, loaded: Loaded, details_fn: Callable = file_details) -> None:
         self.d = loaded
+        self.details_fn = details_fn
+        self.worker = DetailWorker()
         self._tip: tuple | None = None
         self._panel: tuple | None = None
+        self._pending: tuple | None = None
 
     def tooltip(self, hit: tuple[str, int], playhead: int) -> str:
         key = (hit, playhead)
@@ -338,28 +393,46 @@ class DetailCache:
             self._tip = (key, text)
         return self._tip[1]
 
+    def _file(self, fid: int, playhead: int, stale_ok: bool) -> list[str]:
+        """Never blocks: the computed lines, the last lines for this file during
+        playback (`stale_ok`), or the path plus a pending marker."""
+        d = self.d
+        if stale_ok:
+            last = self.worker.latest()
+            if last is not None and last[0][0] == fid:
+                return last[1]
+        lines = self.worker.get((fid, playhead), lambda: self.details_fn(
+            d.h, d.window, playhead, fid, d.coupling))
+        if lines is not None:
+            return lines
+        if self._pending is None or self._pending[0] != (fid, playhead):
+            self._pending = ((fid, playhead), [d.h.files[fid].path, PENDING])
+        return self._pending[1]
+
     def panel(self, selection: tuple[str, int] | None, playhead: int,
               stale_ok: bool = False) -> list[str]:
-        """Lines for the selected object, or the playhead commit. With `stale_ok`
-        (during playback) a selected file keeps its last lines."""
-        key = (selection, playhead)
-        if self._panel is not None and (self._panel[0] == key or (
-                stale_ok and selection is not None and selection[0] == "planet"
-                and self._panel[0][0] == selection)):
-            return self._panel[1]
+        """Lines for the selected object, or the playhead commit. Returns the same
+        list object while the content is unchanged."""
         d, h, w = self.d, self.d.h, self.d.window
-        if selection is None:
-            if w.empty:
-                lines = [d.root.name, "No commits in the selected range"]
-            else:
-                lines = [d.root.name, f"Commit {playhead - w.start + 1:,} of {w.size:,}", "",
-                         *commit_details(h, playhead)]
-        elif selection[0] == "comet":
-            lines = commit_details(h, selection[1])
-        elif selection[1] >= 0:
-            lines = file_details(h, w, playhead, selection[1], d.coupling)
+        if selection is not None and selection[0] == "planet" and selection[1] >= 0:
+            lines = self._file(selection[1], playhead, stale_ok)
+            key = (selection, id(lines))
         else:
-            lines = [aggregate_tooltip(h, d.plan, -selection[1] - 1, playhead)]
+            key = (selection, playhead)
+            if self._panel is not None and self._panel[0] == key:
+                return self._panel[1]
+            if selection is None:
+                if w.empty:
+                    lines = [d.root.name, "No commits in the selected range"]
+                else:
+                    lines = [d.root.name, f"Commit {playhead - w.start + 1:,} of {w.size:,}",
+                             "", *commit_details(h, playhead)]
+            elif selection[0] == "comet":
+                lines = commit_details(h, selection[1])
+            else:
+                lines = [aggregate_tooltip(h, d.plan, -selection[1] - 1, playhead)]
+        if self._panel is not None and self._panel[0] == key:
+            return self._panel[1]
         self._panel = (key, lines)
         return lines
 
@@ -516,7 +589,7 @@ class _Galaxy:
         out = np.zeros((len(ids), 3), "f4")
         f = ids >= 0
         if f.any():
-            places = self.scene._place(ids[f].astype(np.int64), playhead)
+            places = self.scene.placement_of(ids[f], playhead)
             out[f] = lay.dir_pos[lay.place_dir[places]]
         if (~f).any():
             gdir = np.asarray(plan.group_dir, np.int64)[-ids[~f].astype(np.int64) - 1]
@@ -528,7 +601,7 @@ class _Galaxy:
         sc = self.scene
         key = (ph, frozenset(self.d.plan.expanded))
         # reuse the planet batch (no re-upload) once no add/delete/rename animation runs
-        if self._planets is None or key != self._planets_key or now < sc._anim_until:
+        if self._planets is None or key != self._planets_key or sc.animating(now):
             self._planets = sc.planets(ph, now)
             lkey = (key, len(self._planets.ids))
             if self._light is None or self._light[0] != lkey:

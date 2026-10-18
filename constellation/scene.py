@@ -212,6 +212,15 @@ class Scene:
         self._dying = np.zeros(0, dtype=np.int64)
         self._anim_until = -np.inf
 
+    # ---- public queries ----------------------------------------------------
+    def animating(self, now: float) -> bool:
+        """True while an add/delete/rename animation may still change `planets`."""
+        return now < self._anim_until
+
+    def placement_of(self, file_ids, playhead: int) -> np.ndarray:
+        """Placement index of each file at the playhead (vectorised Layout.place_at)."""
+        return self._place(np.asarray(file_ids, dtype=np.int64).reshape(-1), playhead)
+
     # ---- events ------------------------------------------------------------
     def advance(self, prev: int, cur: int, now: float) -> None:
         """Spawn comets/pulses/animations for commits (prev, cur]; a backwards

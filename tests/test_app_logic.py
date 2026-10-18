@@ -216,3 +216,80 @@ def test_pick_uses_drawable_pixels():
                           np.ones((1, 4), "f4"), np.array([3], np.int32))
     # centre of a 1600x1000 drawable (Retina) == point (400, 250) x 2
     assert pick_object(cam, 800, 500, (1600, 1000), planets, _empty_comets()) == ("planet", 3)
+
+
+def _wait_for(fn, timeout=5.0):
+    import time
+    end = time.perf_counter() + timeout
+    while time.perf_counter() < end:
+        v = fn()
+        if v is not None:
+            return v
+        time.sleep(0.005)
+    raise AssertionError("timed out")
+
+
+def test_detail_worker_never_blocks_and_latest_wins():
+    import threading
+    import time
+    from constellation.app import DetailWorker
+    w = DetailWorker()
+    gate, started = threading.Event(), threading.Event()
+
+    def slow():
+        started.set()
+        gate.wait(5)
+        return ["old"]
+    t = time.perf_counter()
+    assert w.get(("f", 1), slow) is None
+    assert w.get(("f", 1), slow) is None          # same key: not re-queued
+    assert started.wait(5)
+    assert w.get(("f", 2), lambda: ["new"]) is None
+    assert time.perf_counter() - t < 0.05
+    gate.set()
+    assert _wait_for(lambda: w.get(("f", 2), lambda: ["new"])) == ["new"]
+    assert _wait_for(lambda: w.discarded or None) == 1   # ("f", 1) finished stale
+    assert w.latest() == (("f", 2), ["new"])
+
+
+def _loaded():
+    from types import SimpleNamespace
+    from pathlib import Path
+    from constellation.collapse import plan
+    from constellation.model import RepoHistory
+    from tests.history_helpers import A, M, c
+    h = RepoHistory.build([c(0, [A("a/x.py", 10)]), c(1, [M("a/x.py", 2, 1)])])
+    w = h.window()
+    return SimpleNamespace(root=Path("/tmp/repo"), h=h, window=w, plan=plan(h, w),
+                           coupling=None)
+
+
+def test_panel_shows_pending_path_then_result_and_drops_stale():
+    import threading
+    import time
+    from constellation.app import PENDING, DetailCache
+    gate, started = threading.Event(), threading.Event()
+    calls = []
+
+    def fake_details(h, w, playhead, fid, coupling):
+        calls.append(playhead)
+        if playhead == 0:
+            started.set()
+            gate.wait(5)
+        return [f"details@{playhead}"]
+    cache = DetailCache(_loaded(), details_fn=fake_details)
+    sel = ("planet", 0)
+    t = time.perf_counter()
+    assert cache.panel(sel, 0) == ["a/x.py", PENDING]
+    assert cache.panel(sel, 0) is cache.panel(sel, 0)  # stable while pending (no redraws)
+    assert time.perf_counter() - t < 0.05
+    assert started.wait(5)
+    assert cache.panel(sel, 1) == ["a/x.py", PENDING]  # playhead moved: playhead 0 is stale
+    gate.set()
+    assert _wait_for(lambda: cache.panel(sel, 1) if cache.panel(sel, 1)[0] != "a/x.py"
+                     else None) == ["details@1"]
+    assert _wait_for(lambda: cache.worker.discarded or None) == 1
+    assert cache.panel(sel, 1) == ["details@1"]
+    # during playback the last lines for the file are kept, nothing is queued
+    n = len(calls)
+    assert cache.panel(sel, 0, stale_ok=True) == ["details@1"] and len(calls) == n

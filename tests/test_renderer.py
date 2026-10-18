@@ -318,3 +318,12 @@ def test_star_glow_shows_around_occluding_planet_but_core_is_hidden(gl_ctx):
     assert both[64, 64, 1] > planet[64, 64, 1] + 20
     # glow still lights pixels just outside the planet's silhouette
     assert both[64, 64 + 15, 1] > planet[64, 64 + 15, 1] + 20
+
+
+def test_star_intensity_damps_the_five_heaviest_in_a_big_galaxy():
+    from constellation.render.renderer import HEAVY_DAMP
+    alive = np.arange(1, 31) * 10
+    inten, _ = star_intensity(_radius(alive))
+    undamped = 4.0 * np.log2(1 + alive) / np.log2(1 + alive.max())
+    assert np.allclose(inten[-5:], undamped[-5:] * HEAVY_DAMP, rtol=1e-5)
+    assert np.allclose(inten[:-5], undamped[:-5], rtol=1e-5)

@@ -14,6 +14,9 @@ PLANET_FLOOR_PX, STAR_FLOOR_PX = 2.0, 4.0
 BLOOM_THRESHOLD, BLOOM_STRENGTH, BLOOM_PASSES = 1.0, 1.0, 2
 COMET_TAIL_N, COMET_TAIL_LEN = 12, 3.0  # points per braid strand, world length
 STAR_MAX_INTENSITY, STAR_FALLOFF_K = 4.0, 5.0
+# The heaviest stars (root children) sit close together and their glows merge into one
+# overexposed blob: damp them when the galaxy has enough stars for that to happen.
+HEAVY_STARS, HEAVY_DAMP, HEAVY_MIN_STARS = 5, 0.6, 20
 NEAREST_CHUNK = 1 << 22  # planet x star distance entries per numpy chunk
 _KEY = np.dtype([("x", "<u4"), ("y", "<u4"), ("z", "<u4")])
 # Clear the HDR buffer to the value that tonemaps (1 - exp(-x)) back to BACKGROUND.
@@ -45,8 +48,9 @@ def star_alive(radius: np.ndarray) -> np.ndarray:
 def star_intensity(radius: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """(peak HDR intensity <= 4, min billboard px) per star from its subtree size.
 
-    Intensity is log2(1 + alive) normalised to the batch max; only stars above the
-    median subtree size get the on-screen size floor.
+    Intensity is log2(1 + alive) normalised to the batch max, with the 5 heaviest
+    stars damped x0.6 once there are >= 20 stars; only stars above the median subtree
+    size get the on-screen size floor.
     """
     alive = star_alive(radius)
     if not len(alive):
@@ -54,6 +58,8 @@ def star_intensity(radius: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     w = np.log2(1.0 + alive)
     w = w / w.max() if w.max() > 0 else np.ones_like(w)
     floor = np.where(alive > np.median(alive), STAR_FLOOR_PX, 0.0)
+    if len(w) >= HEAVY_MIN_STARS:
+        w[np.argsort(-alive, kind="stable")[:HEAVY_STARS]] *= HEAVY_DAMP
     return (STAR_MAX_INTENSITY * w).astype("f4"), floor.astype("f4")
 
 

@@ -272,3 +272,23 @@ def test_scene_frame_budget():
         now += 1 / 600
     mean = (time.perf_counter() - t0) / 100
     assert mean < 0.004, f"{mean * 1000:.2f} ms"
+
+
+def test_placement_of_matches_layout_place_at():
+    h = _hist()
+    s = _scene(h)
+    for ph in range(len(h.commits)):
+        ids = np.arange(len(h.files))
+        got = s.placement_of(ids, ph)
+        want = [s.layout.place_at(int(f), ph) for f in ids]
+        assert got.tolist() == want
+    assert s.placement_of([], 0).shape == (0,)
+
+
+def test_animating_follows_advance():
+    h = _hist()
+    s = _scene(h)
+    assert not s.animating(0.0)
+    s.advance(0, 1, now=10.0)  # adds c/new.py
+    assert s.animating(10.1)
+    assert not s.animating(11.0)
