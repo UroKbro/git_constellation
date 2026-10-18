@@ -90,3 +90,17 @@ def test_git_failure_is_an_error(repo, capsys, monkeypatch):
     monkeypatch.setattr(cli, "read_tags", boom)
     assert main([str(repo.path)]) == 1
     assert "error:" in capsys.readouterr().err
+
+
+def test_since_until_same_day_selects_that_local_day(repo, capsys):
+    from datetime import datetime
+    from tests.repo_builder import DAY, T0
+    def at(d, hour):  # RepoBuilder day offset for a local wall-clock time
+        return (datetime(2024, 6, 10 + d, hour).timestamp() - T0) / DAY
+    repo.commit("d1", {"a.py": "1\n"}, day=at(0, 12))
+    repo.commit("d2", {"a.py": "2\n"}, day=at(1, 23))   # late: --until covers the whole day
+    repo.commit("d3", {"a.py": "3\n"}, day=at(2, 12))
+    assert main([str(repo.path), "--since", "2024-06-11", "--until", "2024-06-11"]) == 0
+    out = capsys.readouterr().out
+    assert "1 commit by 1 author, 1 file" in out
+    assert "From 2024-06-11 to 2024-06-11." in out
