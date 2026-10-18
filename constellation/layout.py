@@ -24,6 +24,24 @@ def _fib(n: int) -> np.ndarray:
     return np.stack([r * np.cos(t), y, r * np.sin(t)], axis=1)
 
 
+_COS_CAP = np.cos(np.radians(75.0))
+
+
+def _cap(n: int, axis: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """n unit vectors on a 75-degree cap about `axis`, first nearest the centre."""
+    u = axis / np.linalg.norm(axis)
+    helper = np.array([1.0, 0, 0]) if abs(u[0]) < 0.9 else np.array([0, 1.0, 0])
+    e1 = np.cross(u, helper)
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(u, e1)
+    i = np.arange(n)
+    z = 1.0 - (1.0 - _COS_CAP) * (i + 0.5) / n
+    r = np.sqrt(1.0 - z * z)
+    t = _GOLDEN * i + rng.uniform(0, 2 * np.pi)
+    return (z[:, None] * u + (r * np.cos(t))[:, None] * e1
+            + (r * np.sin(t))[:, None] * e2)
+
+
 def _rotation(rng: np.random.Generator) -> np.ndarray:
     q, r = np.linalg.qr(rng.normal(size=(3, 3)))
     return q * np.sign(np.diag(r))
@@ -90,29 +108,28 @@ def compute_layout(h: RepoHistory, pairs: Sequence[CouplingPair] = (),
         if parent[d] >= 0:
             subtree[parent[d]] += subtree[d]
 
-    # 1. stars: spacing clears the parent's cloud and keeps sibling subtrees apart
+    # 1. stars: children fan out in an outward cone; spacing uses own-cloud sizes only
     dir_radius = 2.0 + 0.35 * np.sqrt(own)
+    cloud = 1.5 * dir_radius
     children: list[list[int]] = [[] for _ in range(n_dirs)]
     for d in range(n_dirs):
         if parent[d] >= 0:
             children[parent[d]].append(d)
-    extent = 1.5 * dir_radius
-    dist = np.zeros(n_dirs)
-    for p in np.argsort(-depth, kind="stable"):
-        ch = children[p]
-        if not ch:
-            continue
-        emax = extent[ch].max()
-        spread = (3 * emax + 2) / np.sqrt(4 * np.pi / len(ch))
-        dist[ch] = np.maximum(3 * dir_radius[p] + extent[ch] + 2, spread)
-        extent[p] = max(extent[p], (dist[ch] + extent[ch]).max())
     dir_pos = np.zeros((n_dirs, 3))
     for p in np.argsort(depth, kind="stable"):
         ch = sorted(children[p], key=lambda c: (-subtree[c], c))
         if not ch:
             continue
-        dirs3 = _fib(len(ch)) @ _rotation(rng).T
-        dir_pos[ch] = dir_pos[p] + dirs3 * dist[ch][:, None]
+        n = len(ch)
+        if parent[p] < 0:
+            dirs3 = _fib(n) @ _rotation(rng).T
+            omega = 4 * np.pi
+        else:
+            dirs3 = _cap(n, dir_pos[p] - dir_pos[parent[p]], rng)
+            omega = 2 * np.pi * (1 - _COS_CAP)
+        dist = np.maximum(cloud[p] + cloud[ch] + 2,
+                          (2 * cloud[ch].max() + 2) / np.sqrt(omega / n))
+        dir_pos[ch] = dir_pos[p] + dirs3 * dist[:, None]
 
     # 2. placements
     home = np.zeros((n_places, 3))
