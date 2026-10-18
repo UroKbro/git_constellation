@@ -30,6 +30,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return _run(args)
+    except FileNotFoundError as e:
+        if e.filename != "git":
+            print(f"error: {e}", file=sys.stderr)
+        else:
+            print("error: git not found on PATH", file=sys.stderr)
+        return 1
     except (subprocess.CalledProcessError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

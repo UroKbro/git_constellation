@@ -104,3 +104,12 @@ def test_since_until_same_day_selects_that_local_day(repo, capsys):
     out = capsys.readouterr().out
     assert "1 commit by 1 author, 1 file" in out
     assert "From 2024-06-11 to 2024-06-11." in out
+
+
+def test_git_missing_from_path(repo, tmp_path, monkeypatch, capsys):
+    repo.commit("a", {"a.py": "1\n"})
+    empty = tmp_path / "empty-bin"; empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    assert main([str(repo.path)]) == 1
+    err = capsys.readouterr().err
+    assert "error: git not found on PATH" in err and "Traceback" not in err
