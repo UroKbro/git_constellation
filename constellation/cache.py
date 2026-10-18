@@ -10,7 +10,7 @@ from pathlib import Path
 from constellation.git_reader import _git, head_sha, iter_commits
 from constellation.types import Commit, FileChange
 
-_SCHEMA = "1"
+_SCHEMA = "2"
 _PROGRESS_EVERY = 500
 
 _DDL = """
@@ -18,7 +18,8 @@ CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE commits(idx INTEGER PRIMARY KEY, sha TEXT, parents TEXT, author TEXT,
                      email TEXT, ts INTEGER, subject TEXT);
 CREATE TABLE changes(commit_idx INTEGER, status TEXT, path TEXT, old_path TEXT,
-                     added INTEGER, deleted INTEGER, binary INTEGER);
+                     added INTEGER, deleted INTEGER, binary INTEGER,
+                     is_merge INTEGER);
 CREATE INDEX changes_commit ON changes(commit_idx);
 """
 
@@ -46,14 +47,14 @@ def _rev_list(root: Path, ref: str) -> list[str]:
 
 
 def _read_all(con: sqlite3.Connection) -> list[Commit]:
-    by_idx: dict[int, list[FileChange]] = {}
-    for idx, status, path, old, added, deleted, binary in con.execute(
-            "SELECT commit_idx, status, path, old_path, added, deleted, binary "
-            "FROM changes ORDER BY rowid"):
-        by_idx.setdefault(idx, []).append(
+    by_idx: dict[tuple[int, int], list[FileChange]] = {}
+    for idx, status, path, old, added, deleted, binary, is_merge in con.execute(
+            "SELECT commit_idx, status, path, old_path, added, deleted, binary, "
+            "is_merge FROM changes ORDER BY rowid"):
+        by_idx.setdefault((idx, is_merge), []).append(
             FileChange(status, path, old, added, deleted, bool(binary)))
     return [Commit(sha, tuple(parents.split()), author, email, ts, subject,
-                   tuple(by_idx.get(idx, ())))
+                   tuple(by_idx.get((idx, 0), ())), tuple(by_idx.get((idx, 1), ())))
             for idx, sha, parents, author, email, ts, subject in con.execute(
                 "SELECT idx, sha, parents, author, email, ts, subject "
                 "FROM commits ORDER BY idx")]
@@ -64,9 +65,11 @@ def _append(con: sqlite3.Connection, start: int, commits: Iterable[Commit]) -> i
     for c in commits:
         con.execute("INSERT INTO commits VALUES (?,?,?,?,?,?,?)",
                     (idx, c.sha, " ".join(c.parents), c.author, c.email, c.ts, c.subject))
-        con.executemany("INSERT INTO changes VALUES (?,?,?,?,?,?,?)",
+        con.executemany("INSERT INTO changes VALUES (?,?,?,?,?,?,?,?)",
                         [(idx, ch.status, ch.path, ch.old_path, ch.added, ch.deleted,
-                          int(ch.binary)) for ch in c.changes])
+                          int(ch.binary), is_merge)
+                         for is_merge, chs in ((0, c.changes), (1, c.merge_changes))
+                         for ch in chs])
         idx += 1
     return idx
 

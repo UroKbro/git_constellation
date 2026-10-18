@@ -61,3 +61,29 @@ def test_incremental_append_matches_fresh_parse_with_merge(repo):
     repo.checkout("f"); repo.commit("f2", {"f": "2\n"}, day=2)
     repo.checkout("main"); repo.merge("f", "merge f", day=6)
     assert load_commits(repo.path) == list(iter_commits(repo.path))
+
+
+def test_schema_1_db_is_rebuilt(repo, monkeypatch):
+    import sqlite3
+    repo.commit("one", {"a": "1\n"}); load_commits(repo.path)
+    for f in cache_dir().glob("*.db"):
+        con = sqlite3.connect(f)
+        with con:
+            con.execute("UPDATE meta SET value='1' WHERE key='schema'")
+        con.close()
+    calls = []
+    real = cache.iter_commits
+    monkeypatch.setattr(cache, "iter_commits", lambda *a, **k: (calls.append(k), real(*a, **k))[1])
+    assert load_commits(repo.path) == list(real(repo.path))
+    assert calls == [{}]                        # full rebuild, not served or appended
+
+
+def test_merge_changes_round_trip(repo):
+    repo.commit("m0", {"a": "0\n"}, day=0)
+    repo.checkout("f", create=True); repo.mv("a", "b"); repo.commit("f1", day=1)
+    repo.checkout("main"); repo.commit("m1", {"c": "1\n"}, day=2)
+    repo.merge("f", "merge f", day=3)
+    fresh = list(iter_commits(repo.path))
+    assert fresh[-1].merge_changes
+    assert load_commits(repo.path) == fresh
+    assert load_commits(repo.path) == fresh          # served from cache

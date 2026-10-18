@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from constellation.types import Commit, Tag
+from constellation.types import Commit, FileChange, Tag
 
 
 def assign_lineage(commits: list[Commit]) -> np.ndarray:
@@ -124,9 +124,30 @@ class RepoHistory:
             alive[path] = len(builders) - 1
             return len(builders) - 1
 
+        def reconcile(mc: tuple[FileChange, ...], i: int) -> None:
+            """Move the alive set toward a merge's tree: the new side of every
+            per-parent diff is that tree. Idempotent; records no events."""
+            present = {ch.path for ch in mc if ch.status != "D"}
+            for ch in mc:  # renames whose target is missing keep their identity
+                if (ch.status == "R" and ch.path not in alive
+                        and ch.old_path in alive and ch.old_path not in present):
+                    fid = alive.pop(ch.old_path)
+                    alive[ch.path] = fid
+                    builders[fid].paths.append((i, ch.path))
+            for ch in mc:  # paths absent from the merge tree die
+                gone = ch.path if ch.status == "D" else (
+                    ch.old_path if ch.status == "R" else None)
+                if gone is not None and gone not in present and gone in alive:
+                    builders[alive.pop(gone)].died = i
+            for ch in mc:  # paths in the merge tree but not alive are born
+                if ch.status != "D" and ch.path not in alive:
+                    builders[new_file(ch.path, i)].binary = ch.binary
+
         for i, cm in enumerate(h.commits):
             aid = author_ids.setdefault(cm.author, len(author_ids))
             ca[i] = aid
+            if cm.merge_changes:
+                reconcile(cm.merge_changes, i)
             for ch in cm.changes:
                 st = ch.status
                 if st == "R":

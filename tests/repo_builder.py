@@ -61,12 +61,20 @@ class RepoBuilder:
         self._git("rm", "-rf", "-q", "--ignore-unmatch", ".")
 
     def merge(self, branch: str, msg: str, day: float, author: str = "Ana",
-              unrelated: bool = False) -> str:
+              unrelated: bool = False,
+              resolve: dict[str, str | bytes | None] | None = None) -> str:
+        """Merge `branch`. With `resolve`, stop before committing (conflicts
+        allowed), apply those file edits, and commit the merge."""
         args = ["merge", "-q", "--no-ff", "-m", msg]
         if unrelated:
             args.append("--allow-unrelated-histories")
-        self._git(*args, branch, env=self._date_env(author, day))
-        return self._git("rev-parse", "HEAD").strip()
+        if resolve is None:
+            self._git(*args, branch, env=self._date_env(author, day))
+            return self._git("rev-parse", "HEAD").strip()
+        full_env = {**os.environ, **_ENV, **self._date_env(author, day)}
+        subprocess.run(["git", "-C", str(self.path), *args, "--no-commit", branch],
+                       env=full_env, capture_output=True)
+        return self.commit(msg, resolve, author=author, day=day)
 
     def tag(self, name: str, annotated: bool = False) -> None:
         if annotated:

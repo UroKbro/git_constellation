@@ -23,7 +23,7 @@ def test_parses_add_modify_rename_delete_binary(repo):
     assert commits[2].changes == (FileChange("D", "bin.dat", None, 0, 0, True),)
 
 
-def test_merge_commit_has_parents_and_no_changes(repo):
+def test_merge_record_folds_with_merge_changes_from_both_parents(repo):
     repo.commit("a", {"a.txt": "1\n"}, day=0)
     repo.checkout("side", create=True)
     repo.commit("b", {"b.txt": "1\n"}, day=1)
@@ -31,10 +31,13 @@ def test_merge_commit_has_parents_and_no_changes(repo):
     repo.commit("c", {"c.txt": "1\n"}, day=2)
     repo.merge("side", "merge", day=3)
     commits = list(iter_commits(repo.path))
+    assert [c.subject for c in commits] == ["a", "b", "c", "merge"]   # one Commit per merge
     merge = commits[-1]
-    assert merge.subject == "merge"
     assert len(merge.parents) == 2 and all(len(p) == 40 for p in merge.parents)
     assert merge.changes == ()
+    assert merge.merge_changes == (FileChange("A", "b.txt", None, 1, 0, False),   # vs main
+                                   FileChange("A", "c.txt", None, 1, 0, False))   # vs side
+    assert all(c.merge_changes == () for c in commits[:-1])
 
 
 def test_exclude_returns_only_new_commits(repo):

@@ -1,6 +1,7 @@
 """Read-only access to a git repository via plumbing commands."""
 import subprocess
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 from constellation.types import Commit, FileChange, Tag
@@ -46,7 +47,7 @@ def head_sha(root: Path, ref: str = "HEAD") -> str | None:
     raise UnknownRefError(ref)
 
 
-def parse_log(data: bytes) -> Iterator[Commit]:
+def _parse_records(data: bytes) -> Iterator[Commit]:
     for record in data.split(b"\x1e"):
         if not record.strip(b"\n"):
             continue
@@ -78,9 +79,29 @@ def parse_log(data: bytes) -> Iterator[Commit]:
                      tuple(changes))
 
 
+def parse_log(data: bytes) -> Iterator[Commit]:
+    """Parse `git log --diff-merges=separate` output. A merge appears once per
+    parent; consecutive records of one merge fold into a single Commit whose
+    `merge_changes` concatenates the per-parent diffs (`changes` stays empty)."""
+    pending: Commit | None = None
+    for cm in _parse_records(data):
+        if len(cm.parents) > 1:
+            if pending is not None and pending.sha == cm.sha:
+                pending = replace(pending,
+                                  merge_changes=pending.merge_changes + cm.changes)
+                continue
+            cm = replace(cm, changes=(), merge_changes=cm.changes)
+        if pending is not None:
+            yield pending
+        pending = cm
+    if pending is not None:
+        yield pending
+
+
 def iter_commits(root: Path, ref: str = "HEAD", exclude: str | None = None) -> Iterator[Commit]:
     spec = f"{exclude}..{ref}" if exclude else ref
-    cmd = _git(root, "log", "--reverse", "--date-order", "--find-renames", "--raw",
+    cmd = _git(root, "log", "--reverse", "--date-order", "--find-renames",
+               "--diff-merges=separate", "--raw",
                "--numstat", "-z", f"--format={_LOG_FORMAT}", spec)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out, err = proc.communicate()
