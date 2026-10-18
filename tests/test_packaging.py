@@ -25,7 +25,13 @@ def test_wheel_installs_and_runs(tmp_path, repo):
     subprocess.run([venv / "bin" / "python", "-m", "pip", "install", "-q", str(wheel)],
                    check=True, capture_output=True)
     repo.commit("one", {"a.py": "1\n"})
-    r = subprocess.run([venv / "bin" / "git-constellation", str(repo.path), "--no-cache"],
-                       cwd=tmp_path, capture_output=True, text=True)
+    r = subprocess.run([venv / "bin" / "git-constellation", str(repo.path), "--no-cache",
+                        "--summary"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert "commits by" in r.stdout or "commit by" in r.stdout
+    code = ("from constellation.render.renderer import load_shader; "
+            "print(len(load_shader('points.vert')) > 0, len(load_shader('points.frag')) > 0)")
+    r = subprocess.run([venv / "bin" / "python", "-c", code], cwd=tmp_path,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "True True"

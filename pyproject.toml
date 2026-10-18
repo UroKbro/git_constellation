@@ -19,6 +19,9 @@ git-constellation = "constellation.__main__:main"
 [tool.setuptools.packages.find]
 include = ["constellation*"]
 
+[tool.setuptools.package-data]
+"constellation.render" = ["shaders/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: performance tests"]

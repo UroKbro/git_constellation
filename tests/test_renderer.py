@@ -18,8 +18,8 @@ def test_point_at_origin_lights_centre_not_corner(gl_ctx):
     r.render(cam.view(), cam.proj(1.0))
     px = r.read_pixels()
     assert px.shape == (64, 64, 4) and px.dtype == np.uint8
-    assert px[32, 32, :3].max() > 0
-    assert px[0, 0, :3].max() == 0
+    assert px[32, 32, :3].max() > 200
+    assert px[0, 0, :3].max() < 20  # background is near-black navy
 
 
 def test_no_points_renders_background(gl_ctx):

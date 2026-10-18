@@ -1,4 +1,4 @@
-"""Command line entry: python -m constellation PATH [--report out.html]."""
+"""Command line entry: python -m constellation PATH [--report out.html | --summary]."""
 import argparse
 import subprocess
 import sys
@@ -25,7 +25,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--since", type=_date, metavar="YYYY-MM-DD")
     ap.add_argument("--until", type=_date, metavar="YYYY-MM-DD")
     ap.add_argument("--report", metavar="PATH")
+    ap.add_argument("--summary", action="store_true",
+                    help="print findings as text instead of opening the galaxy window")
     ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--screenshot", metavar="PATH", help=argparse.SUPPRESS)
+    ap.add_argument("--at", type=float, default=1.0, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
     try:
@@ -51,8 +55,13 @@ def _run(args: argparse.Namespace) -> int:
     except UnknownRefError:
         print(f"error: unknown branch or ref '{args.branch}'", file=sys.stderr)
         return 1
+    windowed = not (args.report or args.summary)
     if head is None:
         print("No commits yet.")
+        if windowed:
+            from constellation import app
+            return app.run_empty(f"git-constellation — {root.name}",
+                                 screenshot=args.screenshot)
         return 0
 
     commits = load_commits(
@@ -63,6 +72,11 @@ def _run(args: argparse.Namespace) -> int:
     until = None if args.until is None else int(
         (args.until + timedelta(days=1)).timestamp()) - 1
     w = h.window(since, until)
+    if windowed:
+        from constellation import app
+        from constellation.layout import compute_layout
+        return app.run(h, compute_layout(h), f"git-constellation — {root.name}", w,
+                       screenshot=args.screenshot, at=args.at)
     playhead = w.end if not w.empty else len(h.commits) - 1
     items = findings(h, w, playhead)
 
@@ -73,7 +87,6 @@ def _run(args: argparse.Namespace) -> int:
         for f in items:
             print(f.title)
             print(f"  {f.detail}")
-        print("Galaxy window arrives in Phase 2 — use --report for HTML.")
     return 0
 
 
