@@ -6,6 +6,49 @@ import numpy as np
 from constellation.types import Commit, Tag
 
 
+def assign_lineage(commits: list[Commit]) -> np.ndarray:
+    """Mainline (first-parent chain from the last commit) is 0; commits brought in
+    by the k-th mainline merge's non-first parents get k; unreachable ones get 0."""
+    n = len(commits)
+    out = np.zeros(n, dtype=np.int32)
+    if n == 0:
+        return out
+    idx = {cm.sha: i for i, cm in enumerate(commits)}
+    parents = [[idx[p] for p in cm.parents if p in idx] for cm in commits]
+    assigned = np.zeros(n, dtype=bool)
+    i = n - 1
+    while i != -1 and not assigned[i]:
+        assigned[i] = True
+        i = parents[i][0] if parents[i] and commits[i].parents[0] in idx else -1
+    mainline_merges = [i for i in range(n) if assigned[i] and len(parents[i]) > 1]
+    k = 0
+    for m in mainline_merges:
+        k += 1
+        stack = [p for p in parents[m][1:] if not assigned[p]]
+        while stack:
+            j = stack.pop()
+            if assigned[j]:
+                continue
+            assigned[j] = True
+            out[j] = k
+            stack.extend(p for p in parents[j] if not assigned[p])
+    return out
+
+
+@dataclass(frozen=True)
+class Window:
+    start: int
+    end: int
+
+    @property
+    def empty(self) -> bool:
+        return self.start > self.end
+
+    @property
+    def size(self) -> int:
+        return max(0, self.end - self.start + 1)
+
+
 def _dir_of(path: str) -> str:
     return path.rpartition("/")[0]
 
@@ -42,6 +85,7 @@ class RepoHistory:
     def __init__(self):
         self.commits: list[Commit] = []
         self.commit_ts = np.zeros(0, dtype=np.int64)
+        self._ts_runmax = np.zeros(0, dtype=np.int64)
         self.authors: list[str] = []
         self.commit_author = np.zeros(0, dtype=np.int32)
         self.files: list[FileTrack] = []
@@ -68,6 +112,7 @@ class RepoHistory:
         h.head_loc = head_loc
         n = len(h.commits)
         h.commit_ts = np.array([cm.ts for cm in h.commits], dtype=np.int64)
+        h._ts_runmax = np.maximum.accumulate(h.commit_ts)
 
         author_ids: dict[str, int] = {}
         ca = np.zeros(n, dtype=np.int32)
@@ -148,7 +193,7 @@ class RepoHistory:
         h.file_dir = np.array([dir_ids[_dir_of(f.path)] for f in h.files], dtype=i32)
         h.dirs = dirs
         h.dir_parent = np.array(parents, dtype=i32)
-        h.lineage = np.zeros(n, dtype=i32)
+        h.lineage = assign_lineage(h.commits)
         h._born = np.array([f.born for f in h.files], dtype=np.int64)
         h._died = np.array([f.died for f in h.files], dtype=np.int64)
         ev_c = [f.event_commit for f in h.files]
@@ -181,7 +226,13 @@ class RepoHistory:
         return out
 
     def index_at_time(self, ts: int) -> int:
-        return int(np.searchsorted(self.commit_ts, ts, side="right")) - 1
+        return int(np.searchsorted(self._ts_runmax, ts, side="right")) - 1
+
+    def window(self, since: int | None = None, until: int | None = None) -> Window:
+        start = 0 if since is None else int(
+            np.searchsorted(self._ts_runmax, since, side="left"))
+        end = len(self.commits) - 1 if until is None else self.index_at_time(until)
+        return Window(start, end)
 
     def file_id(self, path: str) -> int | None:
         return self._alive_paths.get(path)
