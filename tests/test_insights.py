@@ -1,6 +1,12 @@
+import time
+from datetime import datetime
+
+import pytest
+
 from constellation.insights import Finding, findings
 from constellation.model import RepoHistory
 from tests.history_helpers import A, M, c
+from tests.repo_builder import DAY, T0
 
 
 def _history():
@@ -25,11 +31,31 @@ def test_empty_history():
     assert findings(h, h.window(), -1) == []
 
 
+def _local_day(ts: int) -> str:
+    return f"{datetime.fromtimestamp(ts):%Y-%m-%d}"
+
+
 def test_summary_exact():
     h = _history()
     fs = findings(h, h.window(), 19)
-    assert fs[0] == Finding("summary", "20 commits by 2 authors, 6 files",
-                            "From 2023-11-14 to 2025-11-02.", ())
+    assert fs[0] == Finding(
+        "summary", "20 commits by 2 authors, 6 files",
+        f"From {_local_day(T0)} to {_local_day(T0 + 719 * DAY)}.", ())
+
+
+@pytest.fixture
+def far_east_tz(monkeypatch):
+    """UTC+14: T0 (22:13 UTC) is already the next calendar day locally."""
+    monkeypatch.setenv("TZ", "Pacific/Kiritimati")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_summary_dates_are_local(far_east_tz):
+    h = _history()
+    assert findings(h, h.window(), 19)[0].detail == "From 2023-11-15 to 2025-11-03."
 
 
 def test_empty_window_summary():

@@ -1,6 +1,6 @@
 """Plain-language findings derived from the metrics."""
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 import numpy as np
 
@@ -87,8 +87,8 @@ def _summary(h: RepoHistory, w: Window, playhead: int) -> Finding:
         return Finding("summary", f"0 commits by 0 authors, {n_files} files",
                        "No commits in the selected range.", ())
     n_authors = len(set(h.commit_author[w.start:w.end + 1].tolist()))
-    first = datetime.fromtimestamp(int(h.commit_ts[w.start]), timezone.utc)
-    last = datetime.fromtimestamp(int(h.commit_ts[w.end]), timezone.utc)
+    first = datetime.fromtimestamp(int(h.commit_ts[w.start]))
+    last = datetime.fromtimestamp(int(h.commit_ts[w.end]))
     return Finding("summary",
                    f"{w.size} commits by {n_authors} authors, {n_files} files",
                    f"From {first:%Y-%m-%d} to {last:%Y-%m-%d}.", ())
