@@ -21,3 +21,4 @@ packages = ["constellation"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: performance tests"]

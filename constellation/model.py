@@ -52,6 +52,12 @@ class RepoHistory:
         self.lineage = np.zeros(0, dtype=np.int32)
         self.head_loc: dict[str, int] | None = None
         self._alive_paths: dict[str, int] = {}
+        self._born = np.zeros(0, dtype=np.int64)
+        self._died = np.zeros(0, dtype=np.int64)
+        self._ev_file = np.zeros(0, dtype=np.int64)
+        self._ev_commit = np.zeros(0, dtype=np.int64)
+        self._ev_delta = np.zeros(0, dtype=np.int64)
+        self._head: np.ndarray | None = None
 
     @classmethod
     def build(cls, commits: list[Commit], tags: list[Tag] = (),
@@ -79,6 +85,11 @@ class RepoHistory:
             for ch in cm.changes:
                 st = ch.status
                 if st == "R":
+                    # A rename onto a still-alive path replaces that file.
+                    victim = alive.get(ch.path)
+                    if victim is not None:
+                        builders[victim].died = i
+                        del alive[ch.path]
                     fid = alive.pop(ch.old_path, None) if ch.old_path else None
                     if fid is None:
                         fid = new_file(ch.path, i)
@@ -86,6 +97,8 @@ class RepoHistory:
                         alive[ch.path] = fid
                         builders[fid].paths.append((i, ch.path))
                 elif st == "A":
+                    # Deliberate: "A" on an already-alive path merges into the
+                    # existing id (only dead/unknown paths get a new id).
                     fid = alive.get(ch.path)
                     if fid is None:
                         fid = new_file(ch.path, i)
@@ -136,27 +149,35 @@ class RepoHistory:
         h.dirs = dirs
         h.dir_parent = np.array(parents, dtype=i32)
         h.lineage = np.zeros(n, dtype=i32)
+        h._born = np.array([f.born for f in h.files], dtype=np.int64)
+        h._died = np.array([f.died for f in h.files], dtype=np.int64)
+        ev_c = [f.event_commit for f in h.files]
+        if ev_c:
+            ids = np.repeat(np.arange(len(h.files), dtype=np.int64),
+                            [len(x) for x in ev_c])
+            com = np.concatenate(ev_c).astype(np.int64)
+            dl = np.concatenate([f.event_added.astype(np.int64) - f.event_deleted
+                                 for f in h.files])
+            order = np.argsort(com, kind="stable")
+            h._ev_file, h._ev_commit, h._ev_delta = ids[order], com[order], dl[order]
+        if head_loc is not None:
+            h._head = np.array([head_loc.get(f.path, -1) for f in h.files],
+                               dtype=np.int64)
         return h
 
     def files_alive_at(self, i: int) -> np.ndarray:
-        out = np.zeros(len(self.files), dtype=bool)
-        for k, f in enumerate(self.files):
-            out[k] = f.born <= i and (f.died == -1 or f.died > i)
-        return out
+        return (self._born <= i) & ((self._died == -1) | (self._died > i))
 
     def loc_at(self, i: int) -> np.ndarray:
-        alive = self.files_alive_at(i)
-        out = np.zeros(len(self.files), dtype=np.int64)
-        use_head = self.head_loc is not None and i == len(self.commits) - 1
-        for k in np.flatnonzero(alive):
-            f = self.files[k]
-            if use_head and f.path in self.head_loc:
-                out[k] = self.head_loc[f.path]
-                continue
-            m = int(np.searchsorted(f.event_commit, i, side="right"))
-            total = int(f.event_added[:m].sum(dtype=np.int64)
-                        - f.event_deleted[:m].sum(dtype=np.int64))
-            out[k] = max(total, 0)
+        n = len(self.files)
+        k = int(np.searchsorted(self._ev_commit, i, side="right"))
+        out = np.bincount(self._ev_file[:k], weights=self._ev_delta[:k],
+                          minlength=n).astype(np.int64)
+        np.maximum(out, 0, out=out)
+        if self._head is not None and i == len(self.commits) - 1:
+            have = self._head >= 0
+            out[have] = self._head[have]
+        out[~self.files_alive_at(i)] = 0
         return out
 
     def index_at_time(self, ts: int) -> int:
