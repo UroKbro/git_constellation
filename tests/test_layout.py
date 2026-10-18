@@ -38,16 +38,37 @@ def test_finite():
             assert np.isfinite(arr).all()
 
 
-def test_siblings_nearer_own_star():
-    h = _hist()
-    L = compute_layout(h)
-    depth = np.array([d.count("/") + 1 if d else 0 for d in h.dirs])
+def _assert_own_star_nearest(L):
     for p in range(len(L.place_dir)):
+        dist = np.linalg.norm(L.dir_pos - L.place_pos[p], axis=1)
         d = L.place_dir[p]
-        own = np.linalg.norm(L.place_pos[p] - L.dir_pos[d])
-        for o in np.flatnonzero(depth == depth[d]):
-            if o != d:
-                assert own < np.linalg.norm(L.place_pos[p] - L.dir_pos[o])
+        assert dist[d] == dist.min() and (np.delete(dist, d) > dist[d]).all()
+
+
+def test_siblings_nearer_own_star():
+    _assert_own_star_nearest(compute_layout(_hist()))
+
+
+def test_own_star_nearest_high_fanout():
+    rng = np.random.default_rng(1)
+    changes = [A(f"tests/t{i}/f{j}.py", 1) for i in range(220)
+               for j in range(int(rng.integers(2, 41)))]
+    h = RepoHistory.build([c(0, changes)])
+    n = len(h.files)
+    pairs = []
+    while len(pairs) < 50:
+        a, b = (int(x) for x in rng.integers(0, n, 2))
+        if h.files[a].paths[-1][1].split("/")[1] != h.files[b].paths[-1][1].split("/")[1]:
+            pairs.append(CouplingPair(a, b, 3, 1.0))
+    _assert_own_star_nearest(compute_layout(h, pairs))
+
+
+def test_own_star_nearest_big_dir_with_subdirs():
+    rng = np.random.default_rng(2)
+    changes = [A(f"docs/releases/r{i}.md", 1) for i in range(600)]
+    changes += [A(f"docs/releases/v{i}/f{j}.md", 1) for i in range(30)
+                for j in range(int(rng.integers(1, 6)))]
+    _assert_own_star_nearest(compute_layout(RepoHistory.build([c(0, changes)])))
 
 
 def test_rename_has_two_placements():
@@ -60,6 +81,22 @@ def test_rename_has_two_placements():
     assert L.place_at(fid, 0) == s
     assert L.place_at(fid, 1) == s + 1
     assert L.place_at(fid, 3) == s + 1
+
+
+def test_place_at_before_birth():
+    h = RepoHistory.build([c(0, [A("a.py", 1)]), c(1, [A("b.py", 1)]),
+                           c(2, [A("c.py", 1)]), c(3, [A("d/x.py", 1)])])
+    L = compute_layout(h)
+    fid = next(i for i, f in enumerate(h.files) if f.paths[0][1] == "d/x.py")
+    assert L.place_at(fid, 0) == L.file_place_start[fid]
+
+
+def test_many_couplings_stable():
+    h = RepoHistory.build([c(0, [A(f"d{i % 7}/f{i}.py", 1) for i in range(301)])])
+    pairs = [CouplingPair(0, i, 3, 1.0) for i in range(1, 301)]
+    l60, l61 = compute_layout(h, pairs, iterations=60), compute_layout(h, pairs, iterations=61)
+    assert np.isfinite(l60.place_pos).all()
+    assert np.abs(l60.place_pos - l61.place_pos).max() < 1e-2
 
 
 def test_coupling_pulls_pair_closer():
@@ -80,6 +117,8 @@ def test_bounds_contains_everything():
     ctr, r = L.bounds()
     for pts in (L.place_pos, L.dir_pos):
         assert (np.linalg.norm(pts - ctr, axis=1) <= r + 1e-4).all()
+    ctr, r = compute_layout(RepoHistory.build([])).bounds()
+    assert np.array_equal(ctr, np.zeros(3)) and r == 10.0
     ctr, r = L.bounds(np.zeros(len(L.place_pos), dtype=bool))
     assert np.array_equal(ctr, np.zeros(3)) and r == 10.0
 

@@ -50,11 +50,9 @@ class Layout:
     def bounds(self, mask: np.ndarray | None = None) -> tuple[np.ndarray, float]:
         """Bounding sphere (AABB midpoint, max distance) of placements plus stars."""
         pp = self.place_pos if mask is None else self.place_pos[mask]
+        if len(pp) == 0:
+            return np.zeros(3), 10.0
         pts = np.concatenate([pp, self.dir_pos]).astype(np.float64)
-        if len(pp) == 0 and len(self.dir_pos) == 0:
-            return np.zeros(3), 10.0
-        if mask is not None and len(pp) == 0:
-            return np.zeros(3), 10.0
         centre = (pts.min(axis=0) + pts.max(axis=0)) / 2
         return centre, float(np.linalg.norm(pts - centre, axis=1).max())
 
@@ -92,22 +90,31 @@ def compute_layout(h: RepoHistory, pairs: Sequence[CouplingPair] = (),
         if parent[d] >= 0:
             subtree[parent[d]] += subtree[d]
 
-    # 1. stars
-    dir_pos = np.zeros((n_dirs, 3))
+    # 1. stars: spacing clears the parent's cloud and keeps sibling subtrees apart
+    dir_radius = 2.0 + 0.35 * np.sqrt(own)
     children: list[list[int]] = [[] for _ in range(n_dirs)]
     for d in range(n_dirs):
         if parent[d] >= 0:
             children[parent[d]].append(d)
+    extent = 1.5 * dir_radius
+    dist = np.zeros(n_dirs)
+    for p in np.argsort(-depth, kind="stable"):
+        ch = children[p]
+        if not ch:
+            continue
+        emax = extent[ch].max()
+        spread = (3 * emax + 2) / np.sqrt(4 * np.pi / len(ch))
+        dist[ch] = np.maximum(3 * dir_radius[p] + extent[ch] + 2, spread)
+        extent[p] = max(extent[p], (dist[ch] + extent[ch]).max())
+    dir_pos = np.zeros((n_dirs, 3))
     for p in np.argsort(depth, kind="stable"):
         ch = sorted(children[p], key=lambda c: (-subtree[c], c))
         if not ch:
             continue
         dirs3 = _fib(len(ch)) @ _rotation(rng).T
-        dist = 8.0 + 2.5 * np.sqrt(subtree[ch])
-        dir_pos[ch] = dir_pos[p] + dirs3 * dist[:, None]
+        dir_pos[ch] = dir_pos[p] + dirs3 * dist[ch][:, None]
 
     # 2. placements
-    dir_radius = 2.0 + 0.35 * np.sqrt(own)
     home = np.zeros((n_places, 3))
     if n_places:
         order = np.argsort(place_dir, kind="stable")
@@ -133,16 +140,18 @@ def compute_layout(h: RepoHistory, pairs: Sequence[CouplingPair] = (),
         w = np.array([p.strength for p in pairs]) * _K_PAIR
         keep = a != b
         a, b, w = a[keep], b[keep], w[keep]
+        norm_w = np.maximum(1.0, np.bincount(a, w, n_places) + np.bincount(b, w, n_places))
     else:
         a = b = np.zeros(0, dtype=np.int64)
         w = np.zeros(0)
+        norm_w = None
     for _ in range(iterations if n_places else 0):
         force = _K_HOME * (home - pos)
         if len(a):
             pull = (pos[b] - pos[a]) * w[:, None]
             for ax in range(3):
                 force[:, ax] += (np.bincount(a, pull[:, ax], n_places)
-                                 - np.bincount(b, pull[:, ax], n_places))
+                                 - np.bincount(b, pull[:, ax], n_places)) / norm_w
         pos += _STEP * force
         off = pos - star
         norm = np.linalg.norm(off, axis=1)
