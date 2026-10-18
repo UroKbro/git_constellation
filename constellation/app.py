@@ -6,17 +6,17 @@ import sys
 import numpy as np
 
 from constellation.camera import OrbitCamera
+from constellation.collapse import plan
 from constellation.layout import Layout
 from constellation.model import RepoHistory, Window
 from constellation.render import gl
 from constellation.render.gl import drawable_scale, moderngl, pygame
 from constellation.render.renderer import BACKGROUND, Renderer
+from constellation.scene import Scene
 
 WINDOW_SIZE = (1280, 800)
 FPS = 60
 SCREENSHOT_FRAMES = 30
-DOT_PX = 4.0
-DOT_COLOR = (0.78, 0.86, 1.0, 1.0)
 NO_DISPLAY = 3  # exit code when no window/GL context can be opened
 
 
@@ -73,15 +73,14 @@ def run(h: RepoHistory, layout: Layout, title: str, w: Window, *,
     scale = drawable_scale(ctx, pygame.display.get_window_size())
     renderer = Renderer(ctx, ctx.screen.size)
     mask = initial_mask(h, layout, w)
-    n = int(mask.sum())
-    renderer.set_points(layout.place_pos[mask], np.tile(np.array(DOT_COLOR, "f4"), (n, 1)),
-                        np.full(n, DOT_PX * scale, "f4"))
+    scene = Scene(h, layout, plan(h, w), w)  # interim: static frame at the playhead
+    ph = playhead_of(h, w)
+    planets, stars = scene.planets(ph, 1e9), scene.stars(ph)
+    pulses, comets = scene.pulses(1e9), scene.comets(1e9)
     camera = OrbitCamera()
     dw, dh = renderer.size
-    try:
-        camera.frame(*layout.bounds(mask), aspect=dw / max(dh, 1))
-    except TypeError:  # camera without the aspect keyword
-        camera.frame(*layout.bounds(mask))
+    bounds = layout.bounds(mask)
+    camera.frame(*bounds, aspect=dw / max(dh, 1))
     clock = pygame.time.Clock()
     frames = 0
     try:
@@ -100,7 +99,8 @@ def run(h: RepoHistory, layout: Layout, title: str, w: Window, *,
                 elif ev.type == pygame.MOUSEWHEEL:
                     camera.zoom(ev.y)
             dw, dh = renderer.size
-            renderer.render(camera.view(), camera.proj(dw / max(dh, 1)))
+            renderer.draw(camera.view(), camera.proj(dw / max(dh, 1)), planets, stars,
+                          pulses, comets, 0.0, None, eye=camera.eye(), bounds=bounds)
             frames += 1
             if screenshot is not None and frames >= SCREENSHOT_FRAMES:
                 _save_screen(ctx, renderer.size, screenshot)

@@ -70,12 +70,12 @@ def test_planet_lights_centre_not_far_pixels_or_corners(gl_ctx):
 def test_bright_planet_blooms_but_emissive_zero_does_not(gl_ctx):
     r = Renderer(gl_ctx, SIZE, target=_target(gl_ctx))
     cam = _cam()
-    bg = _draw(r, cam)[64, 64 + 18, :3].astype(int).sum()
-    # disc radius ~10.5 px at this framing; 18 px out is outside the disc
+    bg = _lum(_draw(r, cam), 64, 64 + 14)
+    # disc radius ~10.5 px at this framing; 14 px out is outside the disc
     bright = _draw(r, cam, _planets(rgb=(1.0, 0.6, 0.3), emissive=6.0))
     dull = _draw(r, cam, _planets(rgb=(1.0, 0.6, 0.3), emissive=0.0))
-    assert _lum(bright, 64, 64 + 18) > bg + 10
-    assert _lum(dull, 64, 64 + 18) <= bg + 2
+    assert _lum(bright, 64, 64 + 14) > bg + 10
+    assert _lum(dull, 64, 64 + 14) <= bg + 2
     assert _lum(dull, 64, 64) > 100  # the dull planet itself is still visible
 
 
@@ -133,8 +133,9 @@ def test_pulse_midflight_and_comet_render(gl_ctx):
     cam = _cam()
     px = _draw(r, cam, pulses=_pulses([(-2, 0, 0)], [(2, 0, 0)], born=0.0, life=1.0), now=0.5)
     assert px[60:69, 60:69, :3].max() > 100
+    empty = _draw(r, cam)
     dead = _draw(r, cam, pulses=_pulses([(-2, 0, 0)], [(2, 0, 0)], born=0.0, life=1.0), now=2.0)
-    assert dead[60:69, 60:69, :3].max() < 30
+    assert np.array_equal(dead, empty)  # starfield only
     px = _draw(r, cam, comets=_comets([(0, 0, 0)]), now=0.1)
     assert px[58:71, 58:71, :3].max() > 150
 

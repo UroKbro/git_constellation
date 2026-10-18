@@ -30,7 +30,7 @@ def test_wheel_installs_and_runs(tmp_path, repo):
     assert r.returncode == 0, r.stderr
     assert "commits by" in r.stdout or "commit by" in r.stdout
     code = ("from constellation.render.renderer import load_shader; "
-            "print(len(load_shader('points.vert')) > 0, len(load_shader('points.frag')) > 0)")
+            "print(len(load_shader('planet.vert')) > 0, len(load_shader('planet.frag')) > 0)")
     r = subprocess.run([venv / "bin" / "python", "-c", code], cwd=tmp_path,
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
