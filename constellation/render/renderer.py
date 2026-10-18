@@ -30,7 +30,9 @@ def _set(prog: moderngl.Program, name: str, value) -> None:
 
 def _f4(*cols: np.ndarray) -> bytes:
     n = len(cols[0])
-    return np.hstack([np.asarray(c, "f4").reshape(n, -1) for c in cols]).astype("f4").tobytes()
+    arrs = [np.asarray(c, "f4") for c in cols]
+    return np.hstack([a.reshape(n, a.size // n if n else (a.shape[1] if a.ndim > 1 else 1))
+                      for a in arrs]).astype("f4").tobytes()
 
 
 class _Instances:
@@ -185,8 +187,9 @@ class Renderer:
             common.update(u_eye=tuple(map(float, eye)), u_fog_center=tuple(map(float, bounds[0])),
                           u_fog_radius=max(float(bounds[1]), 1e-6))
         for prog in (self.p_starfield, self.p_planet, self.p_star, self.p_pulse, self.p_comet):
-            prog["u_view"].write(v) if "u_view" in prog else None
-            prog["u_proj"].write(p) if "u_proj" in prog else None
+            for name, m in (("u_view", v), ("u_proj", p)):
+                if name in prog:
+                    prog[name].write(m)
             for k, val in common.items():
                 _set(prog, k, val)
 
