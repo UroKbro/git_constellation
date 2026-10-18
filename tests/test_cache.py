@@ -102,12 +102,16 @@ def readonly(tmp_path):
         p.chmod(0o700 if p.is_dir() else 0o600)
 
 
-def test_unwritable_cache_dir_falls_back(repo, tmp_path, monkeypatch, readonly):
+def test_unwritable_cache_dir_falls_back(repo, tmp_path, monkeypatch, readonly, capsys):
     repo.commit("one", {"a": "1\n"}); repo.commit("two", {"a": "2\n"}, day=1)
     ro = tmp_path / "ro"; ro.mkdir(); readonly(ro)
     monkeypatch.setenv("GIT_CONSTELLATION_CACHE", str(ro))
     assert load_commits(repo.path) == list(iter_commits(repo.path))
     assert not list(ro.glob("*.db"))
+    err = capsys.readouterr().err.splitlines()
+    assert len(err) == 1
+    assert err[0].startswith("warning: cache unavailable (")
+    assert err[0].endswith("); reading history without cache")
 
 
 def test_unwritable_existing_db_falls_back(repo, monkeypatch, readonly):

@@ -3,6 +3,7 @@ import hashlib
 import os
 import sqlite3
 import subprocess
+import sys
 from collections.abc import Callable, Iterable
 from contextlib import closing
 from pathlib import Path
@@ -144,8 +145,9 @@ def load_commits(root: Path, ref: str = "HEAD",
             if cached is not None:
                 return cached
             return _rebuild(path, root, ref, head, progress)
-        except (OSError, sqlite3.Error):
-            pass  # cache unusable (read-only, disk full…): never break the run
+        except (OSError, sqlite3.Error) as e:  # read-only, disk full…: never break the run
+            print(f"warning: cache unavailable ({e}); reading history without cache",
+                  file=sys.stderr)
     commits = list(_counted(iter_commits(root, ref), progress))
     if progress:
         progress(len(commits))
