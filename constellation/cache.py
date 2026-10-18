@@ -137,13 +137,16 @@ def load_commits(root: Path, ref: str = "HEAD",
     head = head_sha(root, ref)
     if head is None:
         return []
-    if not use_cache:
-        commits = list(_counted(iter_commits(root, ref), progress))
-        if progress:
-            progress(len(commits))
-        return commits
-    path = _db_path(root, ref)
-    cached = _try_cached(path, root, ref, head, progress)
-    if cached is not None:
-        return cached
-    return _rebuild(path, root, ref, head, progress)
+    if use_cache:
+        path = _db_path(root, ref)
+        try:
+            cached = _try_cached(path, root, ref, head, progress)
+            if cached is not None:
+                return cached
+            return _rebuild(path, root, ref, head, progress)
+        except (OSError, sqlite3.Error):
+            pass  # cache unusable (read-only, disk full…): never break the run
+    commits = list(_counted(iter_commits(root, ref), progress))
+    if progress:
+        progress(len(commits))
+    return commits

@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from constellation import cache
 from constellation.cache import cache_dir, load_commits
 from constellation.git_reader import iter_commits
@@ -87,3 +89,30 @@ def test_merge_changes_round_trip(repo):
     assert fresh[-1].merge_changes
     assert load_commits(repo.path) == fresh
     assert load_commits(repo.path) == fresh          # served from cache
+
+
+@pytest.fixture
+def readonly(tmp_path):
+    made = []
+    def make(p):
+        p.chmod(0o500 if p.is_dir() else 0o400)
+        made.append(p)
+    yield make
+    for p in made:
+        p.chmod(0o700 if p.is_dir() else 0o600)
+
+
+def test_unwritable_cache_dir_falls_back(repo, tmp_path, monkeypatch, readonly):
+    repo.commit("one", {"a": "1\n"}); repo.commit("two", {"a": "2\n"}, day=1)
+    ro = tmp_path / "ro"; ro.mkdir(); readonly(ro)
+    monkeypatch.setenv("GIT_CONSTELLATION_CACHE", str(ro))
+    assert load_commits(repo.path) == list(iter_commits(repo.path))
+    assert not list(ro.glob("*.db"))
+
+
+def test_unwritable_existing_db_falls_back(repo, monkeypatch, readonly):
+    repo.commit("one", {"a": "1\n"}); load_commits(repo.path)
+    repo.commit("two", {"a": "2\n"}, day=1)          # forces an incremental write
+    for f in cache_dir().glob("*.db"): readonly(f)
+    readonly(cache_dir())
+    assert load_commits(repo.path) == list(iter_commits(repo.path))
