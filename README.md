@@ -30,8 +30,9 @@ This installs the `git-constellation` command (equivalently `python -m constella
 ## Usage
 
 ```sh
-git-constellation [PATH]                          # PATH defaults to the current directory
-git-constellation PATH --report health.html       # write the HTML report
+git-constellation [PATH]                          # open the galaxy window (PATH defaults to .)
+git-constellation PATH --summary                  # print the findings as text, no window
+git-constellation PATH --report health.html       # write the HTML report, no window
 git-constellation PATH --branch main --since 2024-01-01 --until 2024-12-31
 git-constellation PATH --no-cache                 # re-read history, skip the cache
 ```
@@ -41,6 +42,7 @@ git-constellation PATH --no-cache                 # re-read history, skip the ca
 | `PATH` | Any directory inside a git repository |
 | `--branch REF` | Branch, tag or commit to analyse (default `HEAD`) |
 | `--since` / `--until YYYY-MM-DD` | Limit the analysis to a date range (local time, inclusive). Full history is still read so line counts stay correct |
+| `--summary` | Print the findings as plain text instead of opening the window |
 | `--report PATH` | Write a single-file HTML report (no external resources; light and dark mode) |
 | `--no-cache` | Don't read or write the history cache |
 
@@ -75,8 +77,9 @@ Author names are merged using the repository's `.mailmap`.
 | 5. Story features | guided tour, compare mode | Planned |
 | 6. Export & live | screenshot, video recording, `--watch` | Planned |
 
-When Phase 2 lands, running `git-constellation PATH` will open the galaxy
-window, and the text summary will move to `--summary`.
+Running `git-constellation PATH` opens the galaxy window (history replay:
+`Space` play, `←/→` step, `Home/End`, `+/-` speed, `I` panel, `F3` fps);
+the text summary is under `--summary` and the HTML report under `--report`.
 
 The full design is in [`docs/design.md`](docs/design.md); per-phase
 implementation plans are in [`docs/superpowers/plans/`](docs/superpowers/plans/).

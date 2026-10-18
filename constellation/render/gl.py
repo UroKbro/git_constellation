@@ -21,23 +21,29 @@ def configure_gl_attributes() -> None:
     set_attr(pygame.GL_CONTEXT_FLAGS, pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG)
 
 
+_CENTERED_DISPLAY = 0x2FFF0000  # SDL_WINDOWPOS_CENTERED_DISPLAY(n) = this | n
+
+
 def open_window(size: tuple[int, int], title: str, *, hidden: bool = False,
                 display: int = 0, vsync: bool | None = None
-                ) -> tuple[pygame.Surface, moderngl.Context]:
-    """Open a resizable OpenGL window and return it with a blending-enabled context.
+                ) -> tuple[pygame.Window, moderngl.Context]:
+    """Open a resizable high-DPI OpenGL window and return it with a blending-enabled context.
 
-    `vsync=False` requests swap interval 0 (macOS may still force vsync)."""
+    pygame.display.set_mode never asks SDL for a high-DPI drawable (macOS then
+    renders Retina at 1x and upscales), so this uses pygame.Window(allow_high_dpi=True).
+    Swap with `window.flip()`. `vsync=False` requests swap interval 0 (macOS may
+    still force vsync)."""
     configure_gl_attributes()
     if vsync is not None:
         pygame.display.gl_set_attribute(pygame.GL_SWAP_CONTROL, int(vsync))
-    flags = pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE
-    if hidden:
-        flags |= pygame.HIDDEN
-    surface = pygame.display.set_mode(size, flags, display=display)
-    pygame.display.set_caption(title)
+    pos = _CENTERED_DISPLAY | max(int(display), 0)
+    window = pygame.Window(title, size, position=(pos, pos), opengl=True, resizable=True,
+                           allow_high_dpi=True, hidden=hidden)
     ctx = moderngl.create_context()
     ctx.enable(moderngl.BLEND)
-    return surface, ctx
+    if vsync is not None:
+        set_swap_interval(int(vsync))
+    return window, ctx
 
 
 _sdl_lib: ctypes.CDLL | None | bool = False
@@ -62,6 +68,12 @@ def _sdl() -> ctypes.CDLL | None:
             lib = None
         _sdl_lib = lib
     return _sdl_lib
+
+
+def set_swap_interval(n: int) -> bool:
+    """SDL_GL_SetSwapInterval on the current context; False if refused or unavailable."""
+    lib = _sdl()
+    return lib is not None and lib.SDL_GL_SetSwapInterval(int(n)) == 0
 
 
 def drawable_size() -> tuple[int, int] | None:

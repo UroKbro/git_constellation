@@ -165,6 +165,20 @@ def test_fit_camera_fills_85_percent_and_centres(seed, aspect):
     assert np.all(xy >= -1) and np.all(xy <= 1)
 
 
+def test_fit_camera_into_a_sub_region():
+    rng = np.random.default_rng(5)
+    pts = rng.normal(size=(400, 3)) * np.array([20.0, 6.0, 9.0])
+    cam = OrbitCamera()
+    cam.frame((0, 0, 0), float(np.linalg.norm(pts, axis=1).max()), aspect=1.6)
+    region = (-0.28, 0.08, 0.72, 0.92)  # left of a side panel, above a bottom bar
+    fit_camera(cam, pts, 1.6, region=region)
+    xy = project(cam, pts, 1.6)
+    lo, hi = xy.min(0), xy.max(0)
+    span = ((hi - lo) / 2 / np.array(region[2:])).max()
+    assert 0.75 <= span <= 0.90
+    assert np.all(np.abs((lo + hi) / 2 - np.array(region[:2])) <= 0.05)
+
+
 def test_fit_camera_degenerate_inputs_keep_camera_finite():
     cam = OrbitCamera()
     cam.frame((0, 0, 0), 10.0)

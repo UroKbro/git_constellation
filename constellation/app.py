@@ -70,28 +70,31 @@ def project(camera: OrbitCamera, points: np.ndarray, aspect: float) -> np.ndarra
     return hom[:, :2] / hom[:, 3:4]
 
 
-def _extent(camera: OrbitCamera, pts: np.ndarray, aspect: float):
-    """(AABB centre, larger half-extent) in NDC, or None if a point is behind the eye."""
+def _extent(camera: OrbitCamera, pts: np.ndarray, aspect: float, region):
+    """(AABB centre offset from the region centre in NDC, larger half-extent relative
+    to the region's), or None if a point is behind the eye."""
     v = camera.view().astype(np.float64)
     if not np.all(pts @ v[2, :3] + v[2, 3] < -1e-6):
         return None
     xy = project(camera, pts, aspect)
     lo, hi = xy.min(axis=0), xy.max(axis=0)
-    return (lo + hi) / 2, float(((hi - lo) / 2).max())
+    cx, cy, hx, hy = region
+    return (lo + hi) / 2 - (cx, cy), float(((hi - lo) / 2 / (hx, hy)).max())
 
 
 def fit_camera(camera: OrbitCamera, points: np.ndarray, aspect: float,
-               fill: float = FILL, rounds: int = 4) -> None:
-    """Refine a sphere fit: centre the projected AABB of `points` (moving the target
-    in the view plane at its depth) and set the distance so the larger normalised
-    half-extent is `fill` (bisection; perspective makes it non-linear)."""
+               fill: float = FILL, region=(0.0, 0.0, 1.0, 1.0), rounds: int = 4) -> None:
+    """Refine a sphere fit: centre the projected AABB of `points` on `region`
+    (NDC centre x, y and half-extents; default the whole view) by moving the target
+    in the view plane at its depth, and set the distance so the larger half-extent
+    is `fill` of the region's (bisection; perspective makes it non-linear)."""
     pts = np.asarray(points, dtype=np.float64).reshape(-1, 3)
     if len(pts) < 2:
         return
     th = math.tan(math.radians(camera.fov_deg) / 2)
     for _ in range(rounds):
         for _ in range(4):
-            e = _extent(camera, pts, aspect)
+            e = _extent(camera, pts, aspect, region)
             if e is None or e[1] < 1e-9:
                 return
             v = camera.view().astype(np.float64)
@@ -103,7 +106,7 @@ def fit_camera(camera: OrbitCamera, points: np.ndarray, aspect: float,
 
         def ext(d: float) -> float:
             camera.distance = d
-            e = _extent(camera, pts, aspect)
+            e = _extent(camera, pts, aspect, region)
             return math.inf if e is None else e[1]
         while ext(hi) > fill and hi < 1e7:
             hi *= 2
@@ -386,10 +389,10 @@ class _Window:
 
     def __init__(self, title: str, hidden: bool, display: int | None, vsync: bool | None):
         pygame.init()
-        _, self.ctx = gl.open_window(WINDOW_SIZE, title, hidden=hidden, display=display or 0,
+        self.window, self.ctx = gl.open_window(WINDOW_SIZE, title, hidden=hidden, display=display or 0,
                                      vsync=vsync)
         size = gl.drawable_size() or self.ctx.screen.size
-        self.scale = size[0] / max(pygame.display.get_window_size()[0], 1)
+        self.scale = size[0] / max(self.window.size[0], 1)
         self.renderer = Renderer(self.ctx, size)
         self.overlay = Overlay(self.renderer.size, self.scale)
         self.resized = True
@@ -397,7 +400,7 @@ class _Window:
     def sync_size(self) -> None:
         """Re-derive the drawable size and scale (after resize / display change)."""
         self.ctx.detect_framebuffer()  # moderngl caches the default framebuffer
-        ww, wh = pygame.display.get_window_size()
+        ww, wh = self.window.size
         size = gl.drawable_size() or (round(ww * self.scale), round(wh * self.scale))
         scale = size[0] / max(ww, 1)
         if tuple(size) != self.renderer.size:
@@ -456,7 +459,14 @@ class _Galaxy:
         self.bounds = d.layout.bounds(mask)
         aspect = self.win.aspect
         self.camera.frame(*self.bounds, aspect=aspect)
-        fit_camera(self.camera, d.layout.place_pos[mask], aspect)
+        fit_camera(self.camera, d.layout.place_pos[mask], aspect, region=self._scene_region())
+
+    def _scene_region(self) -> tuple[float, float, float, float]:
+        """NDC centre and half-extents of the view left of the panel, above the bar."""
+        w, h = self.win.overlay.size_pt
+        right = 1 - 2 * PANEL_W / w if self.input.panel and w > 2 * PANEL_W else 1.0
+        bottom = -1 + 2 * BAR_H / h if h > 2 * BAR_H else -1.0
+        return (right - 1) / 2, (1 + bottom) / 2, (right + 1) / 2, (1 - bottom) / 2
 
     # overlay geometry (window points)
     def _timeline_hit(self, x: float, y: float) -> float | None:
@@ -652,7 +662,7 @@ def _load(win: _Window, q: queue.Queue, interactive: bool) -> tuple[str, object]
         win.renderer.draw(cam.view(), cam.proj(win.aspect), *empty,
                           time.perf_counter() - start, None)
         if interactive:
-            pygame.display.flip()
+            win.window.flip()
         clock.tick(FPS)
 
 
@@ -674,7 +684,7 @@ def _message(win: _Window, text: str, screenshot: str | None) -> int:
             return 0
         if ("key", "escape") in _events(win):
             return 0
-        pygame.display.flip()
+        win.window.flip()
         clock.tick(FPS)
 
 
@@ -700,7 +710,7 @@ def _interactive(g: _Galaxy, start: float) -> int:
         win.ctx.finish()
         if bloom.add((time.perf_counter() - t0) * 1000):
             win.renderer.set_bloom_scale(0.25)
-        pygame.display.flip()
+        win.window.flip()
         clock.tick(FPS)
 
 
@@ -727,6 +737,8 @@ def _screenshot(g: _Galaxy, path: str, at: float) -> int:
         if not tl.playing:
             settled += 1
         g.frame(prev, now, SCREENSHOT_DT)
+    print(f"playhead {tl.playhead} · {len(g._pulses.born)} pulses · "
+          f"{len(g._comets.born)} comets", file=sys.stderr)
     g.win.save(path)
     return 0
 
@@ -759,7 +771,7 @@ def _bench(g: _Galaxy, seconds: float, start: float) -> int:
             g.frame(prev, now, dt)
             win.ctx.finish()
             work.append((time.perf_counter() - t0) * 1000)
-            pygame.display.flip()
+            win.window.flip()
         w, f = np.array(work[1:] or [0.0]), np.array(wall[1:] or [0.0])
         print(f"bench {name}: work mean {w.mean():.1f} p95 {np.percentile(w, 95):.1f} ms · "
               f"frame mean {f.mean():.1f} p95 {np.percentile(f, 95):.1f} ms")
