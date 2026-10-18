@@ -1,24 +1,7 @@
 import queue
-import sys
-import types
 
 import numpy as np
-import pytest
-
 from constellation.loader import Loaded, start_loading
-
-
-@pytest.fixture(autouse=True)
-def _collapse_stub(monkeypatch):
-    """Stand in for constellation.collapse until it exists."""
-    try:
-        from constellation import collapse  # noqa: F401
-    except ImportError:
-        mod = types.ModuleType("constellation.collapse")
-        mod.plan = lambda h, w: ("plan", w)
-        monkeypatch.setitem(sys.modules, "constellation.collapse", mod)
-        import constellation
-        monkeypatch.setattr(constellation, "collapse", mod, raising=False)
 
 
 def drain(q: queue.Queue, timeout: float = 10.0) -> list[tuple]:

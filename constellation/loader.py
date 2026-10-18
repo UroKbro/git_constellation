@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from constellation.cache import load_commits
+from constellation.collapse import CollapsePlan, plan
 from constellation.git_reader import (NotARepoError, UnknownRefError, head_loc,
                                       head_sha, read_tags, repo_root)
 from constellation.layout import Layout, compute_layout
@@ -20,12 +21,11 @@ class Loaded:
     window: Window
     layout: Layout
     coupling: CouplingIndex
-    plan: object  # collapse.CollapsePlan
+    plan: CollapsePlan
 
 
 def _load(q: queue.Queue, path: Path, ref: str, since: int | None,
           until: int | None, use_cache: bool) -> None:
-    from constellation import collapse
     try:
         root = repo_root(path)
         head = head_sha(root, ref)
@@ -47,7 +47,7 @@ def _load(q: queue.Queue, path: Path, ref: str, since: int | None,
     q.put(("progress", f"Laying out {len(h.files)} files…", None))
     pairs = () if w.empty else coupling.pairs(w.start, w.end)
     layout = compute_layout(h, pairs)
-    q.put(("done", Loaded(root, h, w, layout, coupling, collapse.plan(h, w))))
+    q.put(("done", Loaded(root, h, w, layout, coupling, plan(h, w))))
 
 
 def _worker(q: queue.Queue, *args) -> None:
