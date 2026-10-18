@@ -10,7 +10,7 @@ import math
 
 import numpy as np
 
-NEAR, FAR = 0.1, 20000.0
+DEFAULT_FAR, DEFAULT_MAX_DISTANCE = 20000.0, 5000.0
 FLY_SECONDS = 0.8
 
 
@@ -26,6 +26,8 @@ class OrbitCamera:
         self.yaw = yaw
         self.pitch = pitch
         self.fov_deg = fov_deg
+        self.far = DEFAULT_FAR
+        self.max_distance = DEFAULT_MAX_DISTANCE
         self._fly: tuple | None = None
 
     @property
@@ -55,13 +57,21 @@ class OrbitCamera:
         self.target = self.target - right * dx_px * scale + up * dy_px * scale
 
     def zoom(self, wheel_steps: float) -> None:
-        self.distance = float(np.clip(self.distance * 0.9**wheel_steps, 2.0, 5000.0))
+        self.distance = float(np.clip(self.distance * 0.9**wheel_steps, 2.0, self.max_distance))
 
-    def frame(self, center, radius: float) -> None:
-        """Snap (no animation) so the whole sphere fits the vertical FOV (tangent-cone: r/sin, not r/tan), 10% margin."""
+    def frame(self, center, radius: float, aspect: float = 1.6) -> None:
+        """Snap (no animation) so the sphere fits both axes (tangent-cone), 10% margin.
+
+        Also scales the far plane and zoom limit to the framed radius.
+        """
         self._fly = None
+        radius = float(radius) if radius > 0 else 1.0
+        half_v = math.radians(self.fov_deg) / 2
+        theta = min(half_v, math.atan(math.tan(half_v) * aspect))
         self.target = np.array(center, dtype=np.float64)
-        self.distance = radius / math.sin(math.radians(self.fov_deg) / 2) * 1.1
+        self.distance = radius / math.sin(theta) * 1.1
+        self.far = max(DEFAULT_FAR, 4 * radius)
+        self.max_distance = max(DEFAULT_MAX_DISTANCE, 3 * radius)
 
     def fly_to(self, target, distance: float, now: float) -> None:
         self._fly = (now, self.target.copy(), self.distance,
@@ -92,12 +102,13 @@ class OrbitCamera:
 
     def proj(self, aspect: float) -> np.ndarray:
         """4x4 float32 perspective matrix (row-major math; upload ``.T.copy()``)."""
+        near, far = max(0.01, self.distance / 1000), self.far
         f = 1.0 / math.tan(math.radians(self.fov_deg) / 2)
         m = np.zeros((4, 4))
         m[0, 0] = f / aspect
         m[1, 1] = f
-        m[2, 2] = (FAR + NEAR) / (NEAR - FAR)
-        m[2, 3] = 2 * FAR * NEAR / (NEAR - FAR)
+        m[2, 2] = (far + near) / (near - far)
+        m[2, 3] = 2 * far * near / (near - far)
         m[3, 2] = -1.0
         return m.astype(np.float32)
 

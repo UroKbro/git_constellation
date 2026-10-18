@@ -9,11 +9,11 @@ def _ndc(cam, p, aspect):
     return c[:3] / c[3]
 
 
-@pytest.mark.parametrize("aspect", [1.0, 1.6])
+@pytest.mark.parametrize("aspect", [0.6, 1.0, 1.6])
 def test_frame_contains_sphere(aspect):
     cam = OrbitCamera()
     c, r = np.array([5.0, -3.0, 8.0]), 30.0
-    cam.frame(c, r)
+    cam.frame(c, r, aspect)
     rng = np.random.default_rng(0)
     d = rng.normal(size=(500, 3))
     pts = c + r * d / np.linalg.norm(d, axis=1)[:, None]
@@ -90,3 +90,28 @@ def test_matrices_dtype_shape():
     cam = OrbitCamera()
     assert cam.view().shape == (4, 4) and cam.view().dtype == np.float32
     assert cam.proj(1.5).dtype == np.float32
+
+
+def test_zoom_limit_follows_framed_radius():
+    cam = OrbitCamera()
+    cam.frame((0, 0, 0), 10000.0)
+    cam.zoom(-1000)
+    assert cam.distance == 30000.0
+
+
+def test_proj_near_far():
+    cam = OrbitCamera(distance=500.0)
+    cam.frame((0, 0, 0), 10000.0)
+    cam.distance = 500.0
+    near, far = 0.5, 40000.0
+    m = cam.proj(1.0)
+    assert m[2, 2] == pytest.approx((far + near) / (near - far), rel=1e-5)
+    assert m[2, 3] == pytest.approx(2 * far * near / (near - far), rel=1e-5)
+    cam.distance = 2.0
+    assert cam.proj(1.0)[2, 3] == pytest.approx(2 * far * 0.01 / (0.01 - far), rel=1e-5)
+
+
+def test_frame_zero_radius_finite():
+    cam = OrbitCamera()
+    cam.frame((0, 0, 0), 0.0)
+    assert np.isfinite(cam.view()).all() and np.isfinite(cam.proj(1.6)).all()
