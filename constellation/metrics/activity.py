@@ -46,6 +46,6 @@ def fossil_age_days(h, playhead: int) -> np.ndarray:
     n = len(h.files)
     k = int(np.searchsorted(h._ev_commit, playhead, side="right"))
     last = np.zeros(n, dtype=np.int64)
-    last[h._ev_file[:k]] = h._ev_commit[:k]  # sorted by commit: last write wins
+    np.maximum.at(last, h._ev_file[:k], h._ev_commit[:k])
     age = np.maximum(0.0, (h.commit_ts[playhead] - h.commit_ts[last]) / _DAY)
     return np.where(h.files_alive_at(playhead), age, np.nan)

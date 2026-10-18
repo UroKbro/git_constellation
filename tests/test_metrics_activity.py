@@ -40,6 +40,13 @@ def test_fossil_age():
     assert np.isnan(fossil_age_days(h, 2)[1])
 
 
+def test_fossil_age_uses_latest_of_many_events():
+    h = RepoHistory.build([c(0, [A("a", 1), A("b", 1)], day=0), c(1, [M("a", 1, 0)], day=10),
+                           c(2, [M("a", 1, 0)], day=20), c(3, [M("b", 1, 0)], day=50)])
+    ages = fossil_age_days(h, 3)
+    assert ages[0] == 30 and ages[1] == 0
+
+
 def test_empty_window_and_negative_age_clamp():
     h = RepoHistory.build([c(0, [A("a", 1)], day=10), c(1, [M("a", 1, 0)], day=5)])
     assert change_counts(h, 2, 1).tolist() == [0]
@@ -66,4 +73,8 @@ def test_perf_10k_files_under_100ms():
     t = time.perf_counter()
     out = hotspots(h, h.window(), last)
     assert time.perf_counter() - t < 0.1
+    t = time.perf_counter()
+    ages = fossil_age_days(h, last)
+    assert time.perf_counter() - t < 0.1
+    assert ages.shape == (len(h.files),)
     assert out.shape == (len(h.files),) and out.max() == 1.0
