@@ -128,3 +128,16 @@ def test_coupling_skips_dead_files():
     assert [f.title for f in before] == ["x/a.py ↔ y/b.py"]
     for ph in (5, 6):
         assert _by_kind(findings(h, h.window(), ph), "coupling") == []
+
+
+def test_singular_counts():
+    h = RepoHistory.build([c(0, [A("a.py", 3)], author="Ana", day=0)])
+    fs = findings(h, h.window(), 0)
+    assert fs[0].title == "1 commit by 1 author, 1 file"
+    assert _by_kind(fs, "hotspot")[0].detail == "Changed 1 time, 3 lines, mostly by Ana (100%)."
+    assert findings(h, h.window(since=10**12), 0)[0].title == "0 commits by 0 authors, 1 file"
+
+
+def test_plural_helper():
+    from constellation.insights import _plural
+    assert [_plural(n, "day") for n in (0, 1, 2)] == ["0 days", "1 day", "2 days"]

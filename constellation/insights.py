@@ -12,6 +12,10 @@ from constellation.model import RepoHistory, Window
 MAX_PER_KIND = 10
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
 @dataclass(frozen=True)
 class Finding:
     kind: str
@@ -42,7 +46,7 @@ def findings(h: RepoHistory, w: Window, playhead: int,
         author = h.authors[own.dominant[i]]
         out.append(Finding(
             "hotspot", f"{path(i)} is a hotspot",
-            f"Changed {changes[i]} times, {loc[i]} lines, mostly by {author} "
+            f"Changed {_plural(int(changes[i]), 'time')}, {loc[i]} lines, mostly by {author} "
             f"({round(own.share[i] * 100)}%).", (i,)))
 
     if coupling is None:
@@ -70,25 +74,26 @@ def findings(h: RepoHistory, w: Window, playhead: int,
         out.append(Finding(
             "bus_factor", f"{path(i)} depends on {h.authors[dom]}",
             f"{h.authors[dom]} wrote {round(own.share[i] * 100)}% of it and "
-            f"hasn't committed in {days} days.", (i,)))
+            f"hasn't committed in {_plural(days, 'day')}.", (i,)))
 
     age = fossil_age_days(h, playhead)
     with np.errstate(invalid="ignore"):
         old = (age > FOSSIL_DAYS) & (loc > 0)
     for i in _ranked(np.flatnonzero(old), loc, h):
         out.append(Finding("fossil", f"{path(i)} is a fossil",
-                           f"Untouched for {int(age[i])} days ({loc[i]} lines).", (i,)))
+                           f"Untouched for {_plural(int(age[i]), 'day')} ({loc[i]} lines).", (i,)))
     return out
 
 
 def _summary(h: RepoHistory, w: Window, playhead: int) -> Finding:
     n_files = int(h.files_alive_at(playhead).sum())
     if w.empty:
-        return Finding("summary", f"0 commits by 0 authors, {n_files} files",
+        return Finding("summary", f"0 commits by 0 authors, {_plural(n_files, 'file')}",
                        "No commits in the selected range.", ())
     n_authors = len(set(h.commit_author[w.start:w.end + 1].tolist()))
     first = datetime.fromtimestamp(int(h.commit_ts[w.start]))
     last = datetime.fromtimestamp(int(h.commit_ts[w.end]))
     return Finding("summary",
-                   f"{w.size} commits by {n_authors} authors, {n_files} files",
+                   f"{_plural(w.size, 'commit')} by {_plural(n_authors, 'author')}, "
+                   f"{_plural(n_files, 'file')}",
                    f"From {first:%Y-%m-%d} to {last:%Y-%m-%d}.", ())
