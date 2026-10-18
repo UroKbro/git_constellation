@@ -9,7 +9,7 @@ import numpy as np
 from constellation.collapse import CollapsePlan, in_window
 from constellation.layout import Layout
 from constellation.model import RepoHistory, Window
-from constellation.palette import OTHER, extension, language_color, lineage_color
+from constellation.palette import language_color, lineage_color
 
 ADD_S = 0.6
 DEL_S = 0.8
@@ -102,11 +102,10 @@ class Scene:
         self.in_window = in_window(h, window)
         self.file_rgb = np.array([language_color(f.path) for f in h.files],
                                  dtype=np.float64).reshape(n, 3)
-        exts: dict[str, int] = {}
-        self._ext = np.array([exts.setdefault(extension(f.path), len(exts))
-                              for f in h.files], dtype=np.int64)
-        self._ext_rgb = np.array([language_color("x." + e) if e else OTHER
-                                  for e in exts], dtype=np.float64).reshape(-1, 3)
+        fams: dict[tuple, int] = {}  # language family = distinct palette colour
+        self._fam = np.array([fams.setdefault(tuple(rgb), len(fams)) for rgb in self.file_rgb],
+                             dtype=np.int64)
+        self._fam_rgb = np.array(list(fams), dtype=np.float64).reshape(-1, 3)
 
         # per-event churn aligned with h._ev_* (same stable sort as the model)
         if n:
@@ -121,9 +120,7 @@ class Scene:
         starts = np.asarray(layout.file_place_start, dtype=np.int64)
         n_places = len(layout.place_pos)
         counts = np.diff(np.append(starts, n_places))
-        pc = [cm for f in h.files for cm, _ in f.paths]
-        place_commit = (np.array(pc, dtype=np.int64) if len(pc) == n_places
-                        else np.asarray(layout.place_commit, dtype=np.int64))
+        place_commit = np.asarray(layout.place_commit, dtype=np.int64)
         place_file = np.repeat(np.arange(n, dtype=np.int64), counts)
         self._B = nc + 2
         self._starts = starts
@@ -176,8 +173,16 @@ class Scene:
         self._ren_from = np.full(n, -1, dtype=np.int64)
         self._ren_to = np.full(n, -1, dtype=np.int64)
         self._del_t = np.full(n, -np.inf)
-        self._del_r = np.zeros(n)
+        # delete fade: radius from loc just before death, last placement before death
+        ev_died = died[h._ev_file]
+        before = (ev_died >= 0) & (h._ev_commit < ev_died)
+        loc = np.maximum(0, np.bincount(h._ev_file[before], weights=h._ev_delta[before],
+                                        minlength=n))
+        self._del_r = planet_radius(loc)
         self._del_place = np.zeros(n, dtype=np.int64)
+        if len(dead):
+            self._del_place[dead] = self._place(dead, np.maximum(died[dead] - 1, born[dead]))
+        self._path_files: dict[str, list[int]] | None = None
         self._dying = np.zeros(0, dtype=np.int64)
         self._anim_until = -np.inf
         self._pulses = _empty_pulses()
@@ -216,7 +221,7 @@ class Scene:
         if not 0 < cur - prev <= MAX_STEP:
             self._clear()
             return
-        h, win = self.h, self.in_window
+        win = self.in_window
         self._spawn(prev, cur, now)
 
         lo = np.searchsorted(self._born_sorted, prev + 1, side="left")
@@ -239,16 +244,34 @@ class Scene:
         hi = np.searchsorted(self._died_sorted, cur, side="right")
         f = self._died_order[lo:hi]
         f = f[win[f]]
-        for fid in f.tolist():
-            tr = h.files[fid]
-            before = tr.event_commit < tr.died
-            loc = max(0, int(tr.event_added[before].sum()) - int(tr.event_deleted[before].sum()))
-            self._del_r[fid] = planet_radius(loc)
-            self._del_place[fid] = self._place(np.array([fid]), max(tr.died - 1, tr.born))[0]
         self._del_t[f] = now
         if len(f):
             self._dying = np.union1d(self._dying, f)
         self._anim_until = max(self._anim_until, now + max(ADD_S, DEL_S, REN_S))
+
+    def _merge_stars(self, i: int) -> np.ndarray:
+        """Star positions of the alive files at the paths a merge-only commit's
+        merge_changes leave in its tree."""
+        h = self.h
+        if self._path_files is None:
+            self._path_files = {}
+            for fid, f in enumerate(h.files):
+                for _, p in f.paths:
+                    self._path_files.setdefault(p, []).append(fid)
+        hit: set[int] = set()
+        for ch in h.commits[i].merge_changes:
+            if ch.status == "D":
+                continue
+            for fid in self._path_files.get(ch.path, ()):
+                f = h.files[fid]
+                if not (self.in_window[fid] and f.born <= i and (f.died == -1 or f.died > i)):
+                    continue
+                if next(p for c, p in reversed(f.paths) if c <= i) == ch.path:
+                    hit.add(fid)
+        if not hit:
+            return np.zeros((0, 3))
+        ids = np.fromiter(hit, dtype=np.int64)
+        return self._dir_pos[self._place_dir[self._place(ids, i)]]
 
     def _spawn(self, prev: int, cur: int, now: float) -> None:
         h, n = self.h, self.n_files
@@ -268,6 +291,12 @@ class Scene:
         cnt = np.bincount(slot, minlength=m)
         cen = np.stack([np.bincount(slot, weights=star[:, a], minlength=m) for a in range(3)],
                        axis=1) / np.maximum(cnt, 1)[:, None]
+        for k in np.flatnonzero(cnt == 0):
+            i = prev + 1 + int(k)
+            if i < len(h.commits) and not h.commits[i].changes and h.commits[i].merge_changes:
+                stars = self._merge_stars(i)
+                if len(stars):
+                    cen[k] = stars.mean(axis=0)
         norm = np.linalg.norm(cen, axis=1)
         out = np.where(norm[:, None] > 1e-9, cen / np.maximum(norm, 1e-12)[:, None],
                        np.array([0.0, 1.0, 0.0]))
@@ -313,9 +342,9 @@ class Scene:
         n_g = len(self.plan.group_dir)
         present = np.flatnonzero(np.bincount(hg, minlength=n_g)) if len(hg) else np.zeros(0, np.int64)
         sum_loc = np.bincount(hg, weights=loc[hf], minlength=n_g)
-        n_e = max(len(self._ext_rgb), 1)
-        ext_ct = np.bincount(hg * n_e + self._ext[hf], minlength=n_g * n_e).reshape(n_g, n_e)
-        agg_rgb = self._ext_rgb[ext_ct[present].argmax(axis=1)] if len(present) else np.zeros((0, 3))
+        n_e = max(len(self._fam_rgb), 1)
+        fam_ct = np.bincount(hg * n_e + self._fam[hf], minlength=n_g * n_e).reshape(n_g, n_e)
+        agg_rgb = self._fam_rgb[fam_ct[present].argmax(axis=1)] if len(present) else np.zeros((0, 3))
 
         nd = len(h.dirs)
         sub = np.bincount(self._place_dir[places], minlength=nd).astype(np.int64)

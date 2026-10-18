@@ -7,7 +7,7 @@ import pytest
 from constellation.collapse import plan
 from constellation.layout import Layout, compute_layout
 from constellation.model import RepoHistory, Window
-from constellation.palette import lineage_color
+from constellation.palette import language_color, lineage_color
 from constellation.scene import Scene
 from constellation.types import Commit
 from tests.history_helpers import A, D, M, R, c
@@ -155,10 +155,10 @@ def test_files_outside_window_never_appear():
 
 
 def test_merge_comet_braids():
-    base = [c(0, [A("a.py", 1)]), c(1, [A("b.py", 1)], parents=("s0",)),
+    base = [c(0, [A("a.py", 1)]), c(1, [A("x/b.py", 1)], parents=("s0",)),
             c(2, [M("a.py", 1, 0)], parents=("s0",))]
     merge = dataclasses.replace(c(3, [], parents=("s2", "s1")),
-                                merge_changes=(A("b.py", 1),))
+                                merge_changes=(A("x/b.py", 1), D("old.py", 1)))
     h = RepoHistory.build(base + [merge])
     s = _scene(h)
     s.advance(2, 3, 1.0)
@@ -167,7 +167,20 @@ def test_merge_comet_braids():
     assert not np.allclose(cm.color, cm.color2)
     assert np.allclose(cm.color2[0, :3], lineage_color(1))
     assert len(s.pulses(1.0).born) == 0
-    assert np.allclose(cm.pos[0], [0, 4, 0])
+    # merge-only commit: centroid from the files its merge_changes resolve to
+    star = s.layout.dir_pos[h.dirs.index("x")].astype(np.float64)
+    exp = star + 4 * star / np.linalg.norm(star)
+    assert np.allclose(cm.pos[0], exp, atol=1e-4)
+
+
+def test_merge_comet_without_resolvable_files_points_up():
+    base = [c(0, [A("a.py", 1)]), c(1, [A("b.py", 1)], parents=("s0",)),
+            c(2, [M("a.py", 1, 0)], parents=("s0",))]
+    merge = dataclasses.replace(c(3, [], parents=("s2", "s1")),
+                                merge_changes=(D("zzz.py", 1),))
+    s = _scene(RepoHistory.build(base + [merge]))
+    s.advance(2, 3, 1.0)
+    assert np.allclose(s.comets(1.0).pos[0], [0, 4, 0])
 
 
 def test_stars():
@@ -200,6 +213,31 @@ def test_aggregates_replace_collapsed_members():
     assert np.array_equal(b.ids, np.arange(len(h.files)))
 
 
+def test_aggregate_colour_is_most_common_language():
+    files = ([A(f"p/q/r/s/t{i}.ts", 1) for i in range(100)]
+             + [A(f"p/q/r/s/x{i}.tsx", 1) for i in range(100)]
+             + [A(f"p/q/r/s/m{i}.md", 1) for i in range(150)]
+             + [A(f"o/g{i}.py", 1) for i in range(9_700)])
+    h = RepoHistory.build([c(0, files)])
+    s = _scene(h)
+    b = s.planets(0, FAR)
+    agg = int(np.flatnonzero(b.ids == -1)[0])
+    assert np.allclose(b.color[agg, :3], language_color("a.ts"))
+
+
+@pytest.mark.slow
+def test_mass_delete_advance_is_fast():
+    paths = [f"d{i % 40}/f{i}.py" for i in range(20_000)]
+    h = RepoHistory.build([c(0, [A(p, 3) for p in paths]), c(1, [D(p, 3) for p in paths])])
+    s = _scene(h)
+    t0 = time.perf_counter()
+    s.advance(0, 1, 1.0)
+    dt = time.perf_counter() - t0
+    assert dt < 0.020, f"{dt * 1000:.1f} ms"
+    assert len(s.planets(1, 1.4).ids) == 20_000
+    assert len(s.planets(1, 1.9).ids) == 0
+
+
 def _synthetic(n_files=10_500, n_commits=50_000, seed=0):
     rng = np.random.default_rng(seed)
     paths = [f"big/a/b/c{i % 10}/f{i}.py" if i < 5_000 else f"d{i % 20}/e{i % 7}/f{i}.ts"
@@ -225,6 +263,8 @@ def test_scene_frame_budget():
     ph = 64 * 64
     t0 = time.perf_counter()
     for _ in range(100):
+        s.advance(ph, ph + 64, now)
+        ph += 64
         s.planets(ph, now)
         s.stars(ph)
         s.pulses(now)
