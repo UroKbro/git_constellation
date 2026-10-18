@@ -72,3 +72,21 @@ def test_bad_date_exits_2(repo, capsys):
     with pytest.raises(SystemExit) as e:
         main([str(repo.path), "--since", "yesterday"])
     assert e.value.code == 2
+
+
+def test_report_in_missing_dir_is_an_error(repo, capsys):
+    hot_repo(repo)
+    assert main([str(repo.path), "--report", "/nonexistent-dir/x.html"]) == 1
+    err = capsys.readouterr().err
+    assert "error:" in err and "Traceback" not in err
+
+
+def test_git_failure_is_an_error(repo, capsys, monkeypatch):
+    import subprocess
+    import constellation.__main__ as cli
+    hot_repo(repo)
+    def boom(*a, **k):
+        raise subprocess.CalledProcessError(128, ["git", "for-each-ref"])
+    monkeypatch.setattr(cli, "read_tags", boom)
+    assert main([str(repo.path)]) == 1
+    assert "error:" in capsys.readouterr().err

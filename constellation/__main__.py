@@ -1,5 +1,6 @@
 """Command line entry: python -m constellation PATH [--report out.html]."""
 import argparse
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -27,6 +28,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-cache", action="store_true")
     args = ap.parse_args(argv)
 
+    try:
+        return _run(args)
+    except (subprocess.CalledProcessError, OSError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+def _run(args: argparse.Namespace) -> int:
     try:
         root = repo_root(Path(args.path))
         head = head_sha(root, args.branch)
