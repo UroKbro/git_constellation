@@ -68,9 +68,10 @@ class FileTrack:
 
 class _Builder:
     """Mutable per-file state while replaying commits."""
-    __slots__ = ("paths", "ec", "ea", "ed", "eu", "born", "died", "binary")
+    __slots__ = ("paths", "ec", "ea", "ed", "eu", "born", "died", "binary", "phantom")
 
     def __init__(self, path: str, born: int):
+        self.phantom = False
         self.paths = [(born, path)]
         self.ec: list[int] = []
         self.ea: list[int] = []
@@ -118,6 +119,28 @@ class RepoHistory:
         ca = np.zeros(n, dtype=np.int32)
         builders: list[_Builder] = []
         alive: dict[str, int] = {}
+        erased: set[int] = set()
+        resorted: set[int] = set()
+
+        def fold(fid: int, mc: tuple[FileChange, ...]) -> None:
+            """Merge a dying phantom's events into the file it really belongs to."""
+            b = builders[fid]
+            path = b.paths[-1][1]
+            tgt = next((alive[ch.path] for ch in mc if ch.status == "R"
+                        and ch.old_path == path and ch.path in alive), None)
+            if tgt is None:
+                tgt = next((j for j in range(fid - 1, -1, -1)
+                            if j not in erased and builders[j].died != -1
+                            and builders[j].paths[-1][1] == path), None)
+            if tgt is None:
+                return
+            t = builders[tgt]
+            t.ec += b.ec
+            t.ea += b.ea
+            t.ed += b.ed
+            t.eu += b.eu
+            resorted.add(tgt)
+            erased.add(fid)
 
         def new_file(path: str, i: int) -> int:
             builders.append(_Builder(path, i))
@@ -138,7 +161,10 @@ class RepoHistory:
                 gone = ch.path if ch.status == "D" else (
                     ch.old_path if ch.status == "R" else None)
                 if gone is not None and gone not in present and gone in alive:
-                    builders[alive.pop(gone)].died = i
+                    fid = alive.pop(gone)
+                    builders[fid].died = i
+                    if builders[fid].phantom:
+                        fold(fid, mc)
             for ch in mc:  # paths in the merge tree but not alive are born
                 if ch.status != "D" and ch.path not in alive:
                     builders[new_file(ch.path, i)].binary = ch.binary
@@ -172,6 +198,7 @@ class RepoHistory:
                     fid = alive.get(ch.path)
                     if fid is None:
                         fid = new_file(ch.path, i)
+                        builders[fid].phantom = True
                 b = builders[fid]
                 b.ec.append(i)
                 b.ea.append(ch.added)
@@ -181,6 +208,18 @@ class RepoHistory:
                 if st == "D":
                     b.died = i
                     del alive[ch.path]
+
+        remap: dict[int, int] = {}
+        for j in range(len(builders)):
+            if j not in erased:
+                remap[j] = len(remap)
+        for j in resorted:
+            b = builders[j]
+            o = np.argsort(b.ec, kind="stable")
+            b.ec, b.ea, b.ed, b.eu = ([getattr(b, k)[x] for x in o]
+                                      for k in ("ec", "ea", "ed", "eu"))
+        builders = [b for j, b in enumerate(builders) if j not in erased]
+        alive = {p: remap[f] for p, f in alive.items()}
 
         h.authors = list(author_ids)
         h.commit_author = ca

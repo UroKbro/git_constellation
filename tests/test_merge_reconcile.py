@@ -107,9 +107,7 @@ def test_dir_rename_zombie_killed_and_identity_kept(repo):
     assert _alive(h) == {"new/x"}
     fid = h.file_id("new/x")
     assert h.files[fid].born == 0 and h.files[fid].paths[0] == (0, "old/x")
-    merge = _merge_indexes(h)[0]
-    zombie = next(f for f in h.files if f.path == "old/x")
-    assert zombie.died == merge
+    assert not any(f.path == "old/x" for f in h.files)   # phantom folded away
 
 
 def test_merge_resolved_delete_and_add(repo):
@@ -123,3 +121,34 @@ def test_merge_resolved_delete_and_add(repo):
     counts = change_counts(h, 0, len(h.commits) - 1)
     assert counts[h.file_id("born.py")] == 0
     assert counts[h.file_id("a.py")] == 2       # base + m; the merge adds nothing
+
+
+def test_phantom_after_rename_folds_into_target(repo):
+    zombie_after_dir_rename(repo)
+    h = _build(repo)
+    assert [f.path for f in h.files] == ["new/x"]
+    edit = next(i for i, cm in enumerate(h.commits) if cm.subject == "edit")
+    assert edit in h.files[0].event_commit.tolist()
+    assert list(h.files[0].event_commit) == sorted(h.files[0].event_commit)
+    for i in range(len(h.commits)):
+        assert h.files_alive_at(i).sum() == 1   # never a ghost old/x
+
+
+def test_phantom_after_delete_folds_into_dead_original(repo):
+    repo.commit("base", {"g.py": "1\n", "k.py": "k\n"}, day=0)
+    repo.checkout("side", create=True)
+    repo.commit("edit", {"g.py": "1\n2\n"}, day=3)
+    repo.checkout("main")
+    repo.commit("del", {"g.py": None}, day=2)
+    repo.merge("side", "merge", day=4, resolve={"g.py": None})
+    h = _build(repo)
+    assert sorted(f.path for f in h.files) == ["g.py", "k.py"]
+    g = h.files[[f.path for f in h.files].index("g.py")]
+    edit = next(i for i, cm in enumerate(h.commits) if cm.subject == "edit")
+    assert edit in g.event_commit.tolist()
+    assert _alive(h) == {"k.py"}
+
+
+def test_surviving_phantom_kept(repo):
+    modify_delete_kept(repo)          # existing scenario: merge keeps y.py
+    assert "y.py" in _alive(_build(repo))
