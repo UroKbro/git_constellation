@@ -39,6 +39,12 @@ def _is_ancestor(root: Path, old: str, new: str) -> bool:
     return r.returncode == 0
 
 
+def _rev_list(root: Path, ref: str) -> list[str]:
+    r = subprocess.run(_git(root, "rev-list", "--reverse", "--date-order", ref),
+                       capture_output=True, check=True)
+    return r.stdout.decode().split()
+
+
 def _read_all(con: sqlite3.Connection) -> list[Commit]:
     by_idx: dict[int, list[FileChange]] = {}
     for idx, status, path, old, added, deleted, binary in con.execute(
@@ -102,11 +108,19 @@ def _try_cached(path: Path, root: Path, ref: str, head: str,
             if stored != head:
                 if not _is_ancestor(root, stored, head):
                     return None
-                n = con.execute("SELECT COUNT(*) FROM commits").fetchone()[0]
                 new = list(_counted(iter_commits(root, ref, exclude=stored), progress))
-                _append(con, n, new)
+                combined = _read_all(con) + new
+                order = _rev_list(root, ref)
+                by_sha = {c.sha: c for c in combined}
+                if len(by_sha) != len(combined) or set(order) != set(by_sha):
+                    return None
+                commits = [by_sha[sha] for sha in order]
+                con.execute("DELETE FROM commits")
+                con.execute("DELETE FROM changes")
+                _append(con, 0, commits)
                 con.execute("UPDATE meta SET value=? WHERE key='head'", (head,))
-            commits = _read_all(con)
+            else:
+                commits = _read_all(con)
     except sqlite3.DatabaseError:
         return None
     if progress:

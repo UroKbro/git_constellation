@@ -51,3 +51,13 @@ def test_use_cache_false_writes_nothing(repo):
     repo.commit("one", {"a": "1\n"})
     assert len(load_commits(repo.path, use_cache=False)) == 1
     assert not list(cache_dir().glob("*.db"))
+
+
+def test_incremental_append_matches_fresh_parse_with_merge(repo):
+    repo.commit("m0", {"a": "0\n"}, day=0)
+    repo.checkout("f", create=True); repo.commit("f1", {"f": "1\n"}, day=1)
+    repo.checkout("main"); repo.commit("m1", {"a": "1\n"}, day=5)
+    load_commits(repo.path)
+    repo.checkout("f"); repo.commit("f2", {"f": "2\n"}, day=2)
+    repo.checkout("main"); repo.merge("f", "merge f", day=6)
+    assert load_commits(repo.path) == list(iter_commits(repo.path))
